@@ -2,3 +2,6 @@ node_modules/
 .env
 backend/.env
 frontend/.env
+backend/data/
+backend/uat_logs/
+package-lock.json
