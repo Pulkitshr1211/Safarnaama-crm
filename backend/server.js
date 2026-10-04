@@ -2294,65 +2294,33 @@ function extractCidImages(html) {
  return { html: out, cidAttachments };
 }
 
-// POST /api/email/send — send email via SMTP + save copy to IMAP Sent folder
+// POST /api/email/send
 app.post("/api/email/send", async (req, res) => {
  try {
   const { to, subject, body, html, inReplyTo, references, attachments } = req.body;
   if (!to || !subject) return res.status(400).json({ error: "to and subject required" });
+
+  const useSendGrid = SENDGRID_KEY?.startsWith("SG.");
   const cfg = await getEmailCfg();
-  if (!cfg?.password) return res.status(400).json({ error: "Email not configured" });
+  if (!useSendGrid && !cfg?.password) return res.status(400).json({ error: "Email not configured — add SendGrid key or configure SMTP in Settings" });
 
-  // Convert data: URLs in HTML to CID inline attachments (works in Gmail, Outlook, Apple Mail)
   let finalHtml = html || body || "";
-  let cidAttachments = [];
-  if (finalHtml.includes("data:")) {
-   const extracted = extractCidImages(finalHtml);
-   finalHtml = extracted.html;
-   cidAttachments = extracted.cidAttachments;
-  }
-
-  const mail = {
-   from: cfg.from_name ? `"${cfg.from_name}" <${cfg.username}>` : cfg.username,
-   to,
-   subject,
-   text: body || "",
-   html: finalHtml,
-  };
-  if (inReplyTo)  mail.inReplyTo  = inReplyTo;
-  if (references) mail.references = references;
-
-  // File attachments from compose (base64-encoded)
   const fileAttachments = Array.isArray(attachments) ? attachments.map(a => ({
    filename: a.filename,
    content: Buffer.from(a.content, "base64"),
    contentType: a.contentType || "application/octet-stream",
   })) : [];
 
-  if (cidAttachments.length || fileAttachments.length) {
-   mail.attachments = [...cidAttachments, ...fileAttachments];
-  }
-
-  // Build raw RFC822 message (needed to append to IMAP Sent folder)
-  let rawMessage = null;
-  try {
-   const stream = nodemailer.createTransport({ streamTransport: true, newline: "unix" });
-   const info = await stream.sendMail({ ...mail });
-   const chunks = [];
-   for await (const chunk of info.message) chunks.push(chunk);
-   rawMessage = Buffer.concat(chunks);
-  } catch (e) { console.warn("[email-send] Could not build raw message:", e.message); }
-
-  // Send — prefer SendGrid (cloud-friendly), fall back to SMTP
-  if (SENDGRID_KEY?.startsWith("SG.")) {
+  // ── SendGrid path (fast, no SMTP, no CID conversion needed) ──────────────
+  if (useSendGrid) {
+   const fromEmail = cfg?.username || ENQUIRY_EMAIL;
+   const fromName  = cfg?.from_name || "Safarnaama Holidays";
    const sgMsg = {
-    from: { email: cfg.username, name: cfg.from_name || "Safarnaama Holidays" },
-    to,
-    subject,
-    text: body || "",
-    html: finalHtml || body || "",
+    from: { email: fromEmail, name: fromName },
+    to, subject,
+    text: body || subject,
+    html: finalHtml || body || subject,
    };
-   if (inReplyTo)  sgMsg.headers = { ...(sgMsg.headers||{}), "In-Reply-To": inReplyTo };
-   if (references) sgMsg.headers = { ...(sgMsg.headers||{}), "References": references };
    if (fileAttachments.length) {
     sgMsg.attachments = fileAttachments.map(a => ({
      filename: a.filename,
@@ -2362,26 +2330,52 @@ app.post("/api/email/send", async (req, res) => {
     }));
    }
    await sgMail.send(sgMsg);
-   console.log("[email-send] sent via SendGrid to:", to);
-  } else {
-   const transporter = buildSmtpTransport(cfg);
-   await transporter.sendMail(mail);
-   console.log("[email-send] sent via SMTP to:", to);
+   console.log("[email-send] SendGrid → to:", to);
+   return res.json({ success: true });
   }
 
-  // Respond immediately — append to Sent folder in background (non-blocking)
-  res.json({ success: true });
-  if (rawMessage) {
-   (async () => {
-    try {
-     const imap = buildImapClient(cfg);
-     await imap.connect();
-     await imap.append(cfg.sent_folder || "Sent", rawMessage, ["\\Seen"]);
-     await imap.logout();
-    } catch (e) { console.warn("[email-send] Could not save to Sent folder:", e.message); }
-   })();
+  // ── SMTP path (with CID image conversion + IMAP Sent copy) ───────────────
+  let cidAttachments = [];
+  if (finalHtml.includes("data:")) {
+   const extracted = extractCidImages(finalHtml);
+   finalHtml = extracted.html;
+   cidAttachments = extracted.cidAttachments;
   }
- } catch (e) { res.status(500).json({ error: e.message }); }
+  const mail = {
+   from: cfg.from_name ? `"${cfg.from_name}" <${cfg.username}>` : cfg.username,
+   to, subject,
+   text: body || "",
+   html: finalHtml,
+  };
+  if (inReplyTo)  mail.inReplyTo  = inReplyTo;
+  if (references) mail.references = references;
+  if (cidAttachments.length || fileAttachments.length) {
+   mail.attachments = [...cidAttachments, ...fileAttachments];
+  }
+  const transporter = buildSmtpTransport(cfg);
+  await transporter.sendMail(mail);
+  console.log("[email-send] SMTP → to:", to);
+
+  // Respond immediately, save to Sent folder in background
+  res.json({ success: true });
+  (async () => {
+   try {
+    const stream = nodemailer.createTransport({ streamTransport: true, newline: "unix" });
+    const info = await stream.sendMail({ ...mail });
+    const chunks = [];
+    for await (const chunk of info.message) chunks.push(chunk);
+    const rawMessage = Buffer.concat(chunks);
+    const imap = buildImapClient(cfg);
+    await imap.connect();
+    await imap.append(cfg.sent_folder || "Sent", rawMessage, ["\\Seen"]);
+    await imap.logout();
+   } catch (e) { console.warn("[email-send] Sent folder append failed:", e.message); }
+  })();
+
+ } catch (e) {
+  console.error("[email-send]", e.message);
+  res.status(500).json({ error: e.message });
+ }
 });
 
 // ─── VENDOR REQUESTS ─────────────────────────────────────────────────────────
