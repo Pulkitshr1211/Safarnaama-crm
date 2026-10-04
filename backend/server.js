@@ -184,11 +184,16 @@ app.post("/api/auth/login", async (req, res) => {
   if (!user.password_hash) return res.status(401).json({ error: "Password not set — ask your admin to set it in Settings → Users" });
   const hash = hashPassword(password, user.password_salt || "");
   if (hash !== user.password_hash) return res.status(401).json({ error: "Invalid email or password" });
-  // Password correct — generate & send OTP
+  // Returning user — skip OTP, return token directly
+  if (user.first_login_done) {
+   const token = generateToken(user.id);
+   const { password_hash, password_salt, ...safeUser } = user;
+   return res.json({ token, user: safeUser });
+  }
+  // First-time login — send OTP to verify email ownership
   const otp = generateOTP();
   OTP_STORE.set(user.email.toLowerCase(), { otp, userId: user.id, expiry: Date.now() + OTP_TTL, attempts: 0 });
   await sendOTPEmail(user.email, otp, user.name);
-  // Mask email for display: p****@safarnaamaholidays.com
   const [local, domain] = user.email.split("@");
   const masked = local.slice(0, 2) + "****@" + domain;
   res.json({ otpSent: true, maskedEmail: masked });
@@ -212,9 +217,11 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   OTP_STORE.delete(email.toLowerCase()); // one-time use
   const { data: user } = await db.from("crm_users").select("*").eq("id", record.userId).single();
   if (!user) return res.status(401).json({ error: "User not found" });
+  // Mark first login complete — OTP won't be required again
+  await db.from("crm_users").update({ first_login_done: true }).eq("id", record.userId);
   const token = generateToken(user.id);
   const { password_hash, password_salt, ...safeUser } = user;
-  res.json({ token, user: safeUser });
+  res.json({ token, user: { ...safeUser, first_login_done: true } });
  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

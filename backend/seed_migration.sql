@@ -104,9 +104,10 @@ CREATE TABLE IF NOT EXISTS lead_documents (
 CREATE INDEX IF NOT EXISTS idx_lead_documents_lead_id ON lead_documents(lead_id);
 
 -- ── VERIFY ────────────────────────────────────────────────────────────────────
--- ── AUTH: add password columns to crm_users ──────────────────────────────────
-ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
-ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_salt TEXT;
+-- ── AUTH: add password + first-login columns to crm_users ────────────────────
+ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_hash      TEXT;
+ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_salt      TEXT;
+ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS first_login_done   BOOLEAN DEFAULT FALSE;
 
 SELECT 'itineraries' as tbl, COUNT(*) as rows FROM itineraries
 UNION ALL SELECT 'vouchers',    COUNT(*) FROM vouchers
