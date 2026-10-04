@@ -92,6 +92,134 @@ if (process.env.NODE_ENV === "production") {
  const BUILD = path.join(__dirname, "../frontend/build");
  app.use(express.static(BUILD, { index: "index.html" }));
 }
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+const crypto = require("crypto");
+const AUTH_SECRET = process.env.CRM_AUTH_SECRET || "safarnaama-dev-secret-change-in-prod";
+const TOKEN_TTL   = 24 * 60 * 60 * 1000; // 24 hours
+
+function hashPassword(password, salt) {
+ return crypto.createHmac("sha256", salt).update(password).digest("hex");
+}
+function generateSalt() { return crypto.randomBytes(16).toString("hex"); }
+function generateToken(userId) {
+ const expiry  = Date.now() + TOKEN_TTL;
+ const payload = `${userId}:${expiry}`;
+ const sig     = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+ return Buffer.from(`${payload}:${sig}`).toString("base64url");
+}
+function verifyToken(token) {
+ try {
+  const decoded = Buffer.from(token, "base64url").toString();
+  const lastColon = decoded.lastIndexOf(":");
+  const payload = decoded.slice(0, lastColon);
+  const sig     = decoded.slice(lastColon + 1);
+  const colonIdx = payload.indexOf(":");
+  const expiry   = Number(payload.slice(colonIdx + 1));
+  if (Date.now() > expiry) return null;
+  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+  if (sig.length !== expected.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"))) return null;
+  return payload.slice(0, colonIdx); // userId
+ } catch { return null; }
+}
+
+// Auth middleware — applied to all /api/* except whitelisted paths
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/setup", "/api/health"]);
+app.use((req, res, next) => {
+ if (!req.path.startsWith("/api/")) return next();
+ if (AUTH_SKIP.has(req.path)) return next();
+ if (req.path.startsWith("/webhook/")) return next();
+ const raw = req.headers.authorization || "";
+ if (!raw.startsWith("Bearer ")) return res.status(401).json({ error: "Login required" });
+ const userId = verifyToken(raw.slice(7));
+ if (!userId) return res.status(401).json({ error: "Session expired — please log in again" });
+ req.userId = userId;
+ next();
+});
+
+// POST /api/auth/login
+app.post("/api/auth/login", async (req, res) => {
+ try {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  const { data: user, error } = await db.from("crm_users")
+   .select("*").ilike("email", email.trim()).eq("status", "Active").limit(1).single();
+  if (error || !user) return res.status(401).json({ error: "Invalid email or password" });
+  if (!user.password_hash) return res.status(401).json({ error: "Password not set — ask your admin to set it in Settings → Users" });
+  const hash = hashPassword(password, user.password_salt || "");
+  if (hash !== user.password_hash) return res.status(401).json({ error: "Invalid email or password" });
+  const token = generateToken(user.id);
+  const { password_hash, password_salt, ...safeUser } = user;
+  res.json({ token, user: safeUser });
+ } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/auth/me — validate token + return user
+app.get("/api/auth/me", (req, res, next) => {
+ const raw = req.headers.authorization || "";
+ if (!raw.startsWith("Bearer ")) return res.status(401).json({ error: "Unauthorized" });
+ const userId = verifyToken(raw.slice(7));
+ if (!userId) return res.status(401).json({ error: "Session expired" });
+ req.userId = userId;
+ next();
+}, async (req, res) => {
+ const { data: user } = await db.from("crm_users").select("*").eq("id", req.userId).single();
+ if (!user) return res.status(401).json({ error: "User not found" });
+ const { password_hash, password_salt, ...safeUser } = user;
+ res.json(safeUser);
+});
+
+// POST /api/auth/setup — first-run only: set a password when no passwords exist
+app.post("/api/auth/setup", async (req, res) => {
+ try {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+  const { data: existing } = await db.from("crm_users").select("password_hash").not("password_hash", "is", null).limit(1);
+  if (existing?.length) return res.status(403).json({ error: "Setup already complete — use login" });
+  const { data: user } = await db.from("crm_users").select("*").ilike("email", email.trim()).single();
+  if (!user) return res.status(404).json({ error: "No user found with that email" });
+  const salt = generateSalt();
+  const hash = hashPassword(password, salt);
+  await db.from("crm_users").update({ password_hash: hash, password_salt: salt }).eq("id", user.id);
+  const token = generateToken(user.id);
+  const { password_hash, password_salt, ...safeUser } = { ...user, password_hash: hash, password_salt: salt };
+  res.json({ token, user: safeUser, message: "Setup complete" });
+ } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/auth/change-password — logged-in user changes own password
+app.post("/api/auth/change-password", async (req, res) => {
+ try {
+  const { currentPassword, newPassword } = req.body;
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+  const { data: user } = await db.from("crm_users").select("*").eq("id", req.userId).single();
+  if (!user) return res.status(404).json({ error: "User not found" });
+  if (user.password_hash) {
+   const hash = hashPassword(currentPassword, user.password_salt || "");
+   if (hash !== user.password_hash) return res.status(401).json({ error: "Current password is incorrect" });
+  }
+  const salt = generateSalt();
+  const newHash = hashPassword(newPassword, salt);
+  await db.from("crm_users").update({ password_hash: newHash, password_salt: salt }).eq("id", user.id);
+  res.json({ ok: true });
+ } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/auth/set-user-password — admin sets another user's password
+app.post("/api/auth/set-user-password", async (req, res) => {
+ try {
+  const { userId, newPassword } = req.body;
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+  const { data: admin } = await db.from("crm_users").select("role").eq("id", req.userId).single();
+  if ((admin?.role || "").toLowerCase() !== "admin") return res.status(403).json({ error: "Admin access required" });
+  const salt = generateSalt();
+  const hash = hashPassword(newPassword, salt);
+  await db.from("crm_users").update({ password_hash: hash, password_salt: salt }).eq("id", userId);
+  res.json({ ok: true });
+ } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const genId = (prefix) => `${prefix}${Date.now().toString().slice(-6)}`;
 const genQueryCode = () =>

@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from "react";
 // ─── BACKEND API BASE ─────────────────────────────────────────────────────────
 // React dev server proxies /api/* → http://localhost:3002 via setupProxy.js
 const API = async (method, path, body, isForm = false) => {
- const opts = { method, headers: isForm ? {} : { "Content-Type": "application/json" } };
+ const token = localStorage.getItem("sfn_auth_token");
+ const opts = { method, headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...(token ? { "Authorization": `Bearer ${token}` } : {}) } };
  if (body) opts.body = isForm ? body : JSON.stringify(body);
- // Try relative path first (CRA proxy in dev). If it returns 404, retry against backend host:3002.
  let res = await fetch(path, opts).catch(e => null);
  if (!res || res.status === 404) {
   try {
@@ -13,6 +13,11 @@ const API = async (method, path, body, isForm = false) => {
   } catch (e) { /* fall through */ }
  }
  const data = await (res ? res.json().catch(() => ({})) : Promise.resolve({}));
+ if (res?.status === 401) {
+  localStorage.removeItem("sfn_auth_token");
+  localStorage.removeItem("sfn_auth_user");
+  window.location.reload();
+ }
  if (!res || !res.ok) {
   const err = new Error(data?.error || `HTTP ${res ? res.status : 'NO_RESPONSE'}`);
   err._detail = data?._detail || data;
@@ -790,8 +795,128 @@ function PreviewFrame({ html }) {
   return <iframe ref={ref} title="preview" style={{ width:"100%", height:560, border:"1px solid #e5e7eb", borderRadius:8, background:"#fff" }} />;
 }
 
+// ─── LOGIN PAGE ───────────────────────────────────────────────────────────────
+function LoginPage({ onLogin }) {
+ const [email, setEmail] = useState("");
+ const [password, setPassword] = useState("");
+ const [err, setErr] = useState("");
+ const [loading, setLoading] = useState(false);
+ const [mode, setMode] = useState("login"); // "login" | "setup"
+ const [setupChecked, setSetupChecked] = useState(false);
+
+ useEffect(() => {
+  fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) })
+   .then(r => r.json()).then(d => {
+    if (d.error === "Email and password required") setSetupChecked(true); // setup endpoint reachable + no passwords set
+   }).catch(() => setSetupChecked(true));
+  fetch("/api/auth/me", { headers: { "Authorization": "Bearer invalid" } })
+   .then(r => { if (r.status === 403) setMode("setup"); setSetupChecked(true); });
+ }, []);
+
+ const checkFirstRun = async () => {
+  try {
+   const r = await fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+   const d = await r.json();
+   if (d.error === "Setup already complete — use login") { setMode("login"); return false; }
+   return true;
+  } catch { return false; }
+ };
+
+ const doSubmit = async (e) => {
+  e.preventDefault();
+  if (!email || !password) return setErr("Email and password are required");
+  if (password.length < 8) return setErr("Password must be at least 8 characters");
+  setErr(""); setLoading(true);
+  try {
+   const endpoint = mode === "setup" ? "/api/auth/setup" : "/api/auth/login";
+   let res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim(), password }) });
+   if (!res.ok && res.status === 404) {
+    res = await fetch(`${window.location.protocol}//${window.location.hostname}:3002${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim(), password }) });
+   }
+   const data = await res.json();
+   if (!res.ok) throw new Error(data.error || "Failed");
+   onLogin(data.user, data.token);
+  } catch(e) { setErr(e.message); }
+  setLoading(false);
+ };
+
+ const inp = { width:"100%", padding:"11px 13px", border:"1.5px solid #E2E8F0", borderRadius:8, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
+ const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#475569", marginBottom:6, textTransform:"uppercase", letterSpacing:".5px" };
+
+ return (
+  <div style={{ minHeight:"100vh", background:"linear-gradient(145deg,#0D2030 0%,#1a3a5c 60%,#0D2030 100%)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+   <div style={{ background:"#fff", borderRadius:18, padding:"44px 40px", width:"100%", maxWidth:420, boxShadow:"0 30px 80px rgba(0,0,0,.45)" }}>
+    <div style={{ textAlign:"center", marginBottom:32 }}>
+     <div style={{ fontSize:40, marginBottom:10 }}>✈️</div>
+     <h1 style={{ fontSize:24, fontWeight:800, color:"#0D2030", margin:0, letterSpacing:"-.3px" }}>Safarnaama CRM</h1>
+     <p style={{ fontSize:13, color:"#94A3B8", marginTop:5 }}>Safarnaama Holidays — Internal Portal</p>
+    </div>
+    {mode === "setup" && (
+     <div style={{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:8, padding:"10px 14px", fontSize:12.5, color:"#1E40AF", marginBottom:20 }}>
+      <strong>First-time setup:</strong> No passwords are set yet. Enter the admin email and create a password to get started.
+     </div>
+    )}
+    <form onSubmit={doSubmit}>
+     <div style={{ marginBottom:16 }}>
+      <label style={lbl}>Email</label>
+      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@safarnaamaholidays.com" required style={inp} autoFocus />
+     </div>
+     <div style={{ marginBottom:22 }}>
+      <label style={lbl}>{mode === "setup" ? "Create Password" : "Password"}</label>
+      <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={inp} />
+      {mode === "setup" && <p style={{ fontSize:11, color:"#94A3B8", marginTop:5 }}>Minimum 8 characters</p>}
+     </div>
+     {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+     <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer", letterSpacing:".2px" }}>
+      {loading ? "Please wait…" : mode === "setup" ? "Create Account & Sign In" : "Sign In"}
+     </button>
+    </form>
+    {mode === "setup" && (
+     <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:16, cursor:"pointer" }} onClick={() => setMode("login")}>Already have a password? <span style={{ color:"#0EA5E9" }}>Sign in instead</span></p>
+    )}
+    <p style={{ textAlign:"center", fontSize:11, color:"#CBD5E1", marginTop:24 }}>Authorised personnel only</p>
+   </div>
+  </div>
+ );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
+ // ── AUTH ───────────────────────────────────────────────────────────────────
+ const [authUser, setAuthUser] = useState(() => {
+  try { const u = localStorage.getItem("sfn_auth_user"); return u ? JSON.parse(u) : null; } catch { return null; }
+ });
+ const [authChecked, setAuthChecked] = useState(false);
+ useEffect(() => {
+  const token = localStorage.getItem("sfn_auth_token");
+  if (!token) { setAuthChecked(true); return; }
+  const base = `${window.location.protocol}//${window.location.hostname}`;
+  const tryUrl = (url) => fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  tryUrl("/api/auth/me").catch(() => tryUrl(`${base}:3002/api/auth/me`))
+   .then(r => r.ok ? r.json() : null)
+   .then(user => {
+    if (user?.id) { setAuthUser(user); localStorage.setItem("sfn_auth_user", JSON.stringify(user)); }
+    else { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); }
+   })
+   .catch(() => {})
+   .finally(() => setAuthChecked(true));
+ }, []);
+
+ const doLogout = () => { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); };
+
+ if (!authChecked) return (
+  <div style={{ minHeight:"100vh", background:"#0D2030", display:"flex", alignItems:"center", justifyContent:"center", color:"#94A3B8", fontSize:14 }}>
+   Loading…
+  </div>
+ );
+ if (!authUser) return (
+  <LoginPage onLogin={(user, token) => {
+   localStorage.setItem("sfn_auth_token", token);
+   localStorage.setItem("sfn_auth_user", JSON.stringify(user));
+   setAuthUser(user);
+  }} />
+ );
+ // ──────────────────────────────────────────────────────────────────────────
  const [page, setPage] = useState("dashboard");
  // ── PORTAL MODE ────────────────────────────────────────────────────────────
  // If ?portal=<id> is in the URL, load that white-label config and apply its branding
@@ -1639,10 +1764,13 @@ Return JSON only:
  <div style={{ height:52, background: isDark ? "#0F172A" : "#FFFFFF", borderBottom: isDark ? "1px solid #1E293B" : "1px solid #E6ECF5", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 22px", flexShrink:0 }}>
  <h2 style={{ fontSize:15, fontFamily:"'Playfair Display',serif", color: isDark ? "#E2E8F0" : "#0F172A", fontWeight:600 }}>{NAV.find(n=>n.id===page)?.label}</h2>
  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
- {/* Active user selector */}
- <Sel value={currentUser.id} onChange={e=>setCurrentUserId(e.target.value)} style={{ width:180, padding:"5px 9px", fontSize:11 }}>
- {users.filter(u=>u.status === "Active").map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
- </Sel>
+ {/* Logged-in user badge + logout */}
+ <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+  <div style={{ fontSize:11, color: isDark ? "#94A3B8" : "#64748B", background: isDark ? "#1E293B" : "#F1F5F9", border: isDark ? "1px solid #334155" : "1px solid #E2E8F0", borderRadius:20, padding:"4px 12px" }}>
+   {authUser?.name || currentUser?.name} <span style={{ opacity:.6 }}>({authUser?.role || currentUser?.role})</span>
+  </div>
+  <button onClick={doLogout} title="Sign out" style={{ background:"transparent", border:"1px solid", borderColor: isDark ? "#334155" : "#E2E8F0", color: isDark ? "#94A3B8" : "#64748B", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}>Sign out</button>
+ </div>
  {/* Task button */}
  {hasPermission("assign_task") && <Btn v="primary" icon="plus" s={{ fontSize:11, padding:"5px 10px" }} onClick={openTaskModal}>Add / Assign Task</Btn>}
  {/* Upload button always visible */}
