@@ -2077,8 +2077,9 @@ app.get("/api/email/config", async (req, res) => {
  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/debug/email — diagnostic: shows DB + email config state (no passwords)
+// GET /api/debug/email — diagnostic: shows DB + email config state + SMTP test
 app.get("/api/debug/email", async (req, res) => {
+ const net = require("net");
  const steps = [];
  steps.push({ step: "supabase_env", ok: !!supabase, detail: supabase ? "SUPABASE_URL and key set" : "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in .env" });
  if (supabase) {
@@ -2088,9 +2089,20 @@ app.get("/api/debug/email", async (req, res) => {
    else steps.push({ step: "app_settings_read", ok: true, detail: `table OK — rows: ${(data||[]).map(r=>r.key).join(", ")||"(empty)"}` });
   } catch (e) { steps.push({ step: "app_settings_read", ok: false, detail: e.message }); }
  }
- steps.push({ step: "file_backup", ok: fs.existsSync(EMAIL_CFG_FILE), detail: fs.existsSync(EMAIL_CFG_FILE) ? EMAIL_CFG_FILE : "No file backup yet — save once from Settings → Email" });
+ steps.push({ step: "file_backup", ok: fs.existsSync(EMAIL_CFG_FILE), detail: fs.existsSync(EMAIL_CFG_FILE) ? EMAIL_CFG_FILE : "No file backup" });
  const cfg = await getEmailCfg();
- steps.push({ step: "email_config", ok: !!cfg, detail: cfg ? `imap=${cfg.imap_host||"(blank)"}:${cfg.imap_port} smtp=${cfg.smtp_host||"(blank)"}:${cfg.smtp_port} user=${cfg.username||"(blank)"} password=${cfg.password?"set":"MISSING"}` : "No config found — save from Settings → Email" });
+ steps.push({ step: "email_config", ok: !!cfg, detail: cfg ? `smtp=${cfg.smtp_host||"(blank)"}:${cfg.smtp_port} imap=${cfg.imap_host||"(blank)"}:${cfg.imap_port} user=${cfg.username||"(blank)"} password=${cfg.password?"SET":"MISSING"}` : "No config found — save in Settings → Email" });
+ // Quick TCP test to SMTP
+ if (cfg?.smtp_host) {
+  const tcpOk = await new Promise(resolve => {
+   const s = net.createConnection({ host: cfg.smtp_host, port: Number(cfg.smtp_port)||465 });
+   s.setTimeout(5000);
+   s.on("connect", () => { s.destroy(); resolve(true); });
+   s.on("timeout", () => { s.destroy(); resolve(false); });
+   s.on("error",   () => { s.destroy(); resolve(false); });
+  });
+  steps.push({ step: "smtp_tcp", ok: tcpOk, detail: tcpOk ? `${cfg.smtp_host}:${cfg.smtp_port} reachable` : `${cfg.smtp_host}:${cfg.smtp_port} NOT reachable from Railway — GoDaddy may block cloud IPs. Try port 587 or use SendGrid.` });
+ }
  res.json({ steps });
 });
 
