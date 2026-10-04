@@ -2342,9 +2342,32 @@ app.post("/api/email/send", async (req, res) => {
    rawMessage = Buffer.concat(chunks);
   } catch (e) { console.warn("[email-send] Could not build raw message:", e.message); }
 
-  // Send via SMTP
-  const transporter = buildSmtpTransport(cfg);
-  await transporter.sendMail(mail);
+  // Send — prefer SendGrid (cloud-friendly), fall back to SMTP
+  if (SENDGRID_KEY?.startsWith("SG.")) {
+   const sgMsg = {
+    from: { email: cfg.username, name: cfg.from_name || "Safarnaama Holidays" },
+    to,
+    subject,
+    text: body || "",
+    html: finalHtml || body || "",
+   };
+   if (inReplyTo)  sgMsg.headers = { ...(sgMsg.headers||{}), "In-Reply-To": inReplyTo };
+   if (references) sgMsg.headers = { ...(sgMsg.headers||{}), "References": references };
+   if (fileAttachments.length) {
+    sgMsg.attachments = fileAttachments.map(a => ({
+     filename: a.filename,
+     content: a.content.toString("base64"),
+     type: a.contentType,
+     disposition: "attachment",
+    }));
+   }
+   await sgMail.send(sgMsg);
+   console.log("[email-send] sent via SendGrid to:", to);
+  } else {
+   const transporter = buildSmtpTransport(cfg);
+   await transporter.sendMail(mail);
+   console.log("[email-send] sent via SMTP to:", to);
+  }
 
   // Respond immediately — append to Sent folder in background (non-blocking)
   res.json({ success: true });
