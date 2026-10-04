@@ -799,9 +799,21 @@ function PreviewFrame({ html }) {
 function LoginPage({ onLogin }) {
  const [email, setEmail] = useState("");
  const [password, setPassword] = useState("");
+ const [otp, setOtp] = useState("");
+ const [maskedEmail, setMaskedEmail] = useState("");
  const [err, setErr] = useState("");
  const [loading, setLoading] = useState(false);
- const [mode, setMode] = useState("login"); // "login" | "setup"
+ const [mode, setMode] = useState("login"); // "login" | "setup" | "otp"
+
+ const apiPost = async (endpoint, body) => {
+  let res = await fetch(endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  if (!res.ok && res.status === 404) {
+   res = await fetch(`${window.location.protocol}//${window.location.hostname}:3002${endpoint}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+ };
 
  useEffect(() => {
   const urls = ["/api/auth/needs-setup", `${window.location.protocol}//${window.location.hostname}:3002/api/auth/needs-setup`];
@@ -814,19 +826,36 @@ function LoginPage({ onLogin }) {
   tryNext(0);
  }, []);
 
- const doSubmit = async (e) => {
+ const doLogin = async (e) => {
+  e.preventDefault();
+  if (!email || !password) return setErr("Email and password are required");
+  setErr(""); setLoading(true);
+  try {
+   const data = await apiPost("/api/auth/login", { email: email.trim(), password });
+   if (data.otpSent) { setMaskedEmail(data.maskedEmail); setMode("otp"); }
+   else if (data.token) { onLogin(data.user, data.token); } // fallback if OTP disabled
+  } catch(e) { setErr(e.message); }
+  setLoading(false);
+ };
+
+ const doVerifyOtp = async (e) => {
+  e.preventDefault();
+  if (!otp || otp.length !== 6) return setErr("Enter the 6-digit code from your email");
+  setErr(""); setLoading(true);
+  try {
+   const data = await apiPost("/api/auth/verify-otp", { email: email.trim(), otp: otp.trim() });
+   onLogin(data.user, data.token);
+  } catch(e) { setErr(e.message); }
+  setLoading(false);
+ };
+
+ const doSetup = async (e) => {
   e.preventDefault();
   if (!email || !password) return setErr("Email and password are required");
   if (password.length < 8) return setErr("Password must be at least 8 characters");
   setErr(""); setLoading(true);
   try {
-   const endpoint = mode === "setup" ? "/api/auth/setup" : "/api/auth/login";
-   let res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim(), password }) });
-   if (!res.ok && res.status === 404) {
-    res = await fetch(`${window.location.protocol}//${window.location.hostname}:3002${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim(), password }) });
-   }
-   const data = await res.json();
-   if (!res.ok) throw new Error(data.error || "Failed");
+   const data = await apiPost("/api/auth/setup", { email: email.trim(), password });
    onLogin(data.user, data.token);
   } catch(e) { setErr(e.message); }
   setLoading(false);
@@ -838,34 +867,75 @@ function LoginPage({ onLogin }) {
  return (
   <div style={{ minHeight:"100vh", background:"linear-gradient(145deg,#0D2030 0%,#1a3a5c 60%,#0D2030 100%)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
    <div style={{ background:"#fff", borderRadius:18, padding:"44px 40px", width:"100%", maxWidth:420, boxShadow:"0 30px 80px rgba(0,0,0,.45)" }}>
-    <div style={{ textAlign:"center", marginBottom:32 }}>
+    <div style={{ textAlign:"center", marginBottom:28 }}>
      <div style={{ fontSize:40, marginBottom:10 }}>✈️</div>
      <h1 style={{ fontSize:24, fontWeight:800, color:"#0D2030", margin:0, letterSpacing:"-.3px" }}>Safarnaama CRM</h1>
      <p style={{ fontSize:13, color:"#94A3B8", marginTop:5 }}>Safarnaama Holidays — Internal Portal</p>
     </div>
-    {mode === "setup" && (
-     <div style={{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:8, padding:"10px 14px", fontSize:12.5, color:"#1E40AF", marginBottom:20 }}>
-      <strong>First-time setup:</strong> No passwords are set yet. Enter the admin email and create a password to get started.
-     </div>
+
+    {/* ── OTP step ── */}
+    {mode === "otp" && (
+     <form onSubmit={doVerifyOtp}>
+      <div style={{ background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:8, padding:"12px 14px", fontSize:13, color:"#166534", marginBottom:20 }}>
+       A 6-digit code was sent to <strong>{maskedEmail}</strong>. Enter it below to sign in.
+      </div>
+      <div style={{ marginBottom:20 }}>
+       <label style={lbl}>Verification Code</label>
+       <input value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="123456" maxLength={6} required autoFocus
+        style={{ ...inp, fontSize:28, fontWeight:700, letterSpacing:12, textAlign:"center" }} />
+      </div>
+      {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+      <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#16A34A", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+       {loading ? "Verifying…" : "Verify & Sign In"}
+      </button>
+      <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:14, cursor:"pointer" }} onClick={() => { setMode("login"); setOtp(""); setErr(""); }}>
+       ← Back to login
+      </p>
+     </form>
     )}
-    <form onSubmit={doSubmit}>
-     <div style={{ marginBottom:16 }}>
-      <label style={lbl}>Email</label>
-      <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@safarnaamaholidays.com" required style={inp} autoFocus />
-     </div>
-     <div style={{ marginBottom:22 }}>
-      <label style={lbl}>{mode === "setup" ? "Create Password" : "Password"}</label>
-      <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={inp} />
-      {mode === "setup" && <p style={{ fontSize:11, color:"#94A3B8", marginTop:5 }}>Minimum 8 characters</p>}
-     </div>
-     {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
-     <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer", letterSpacing:".2px" }}>
-      {loading ? "Please wait…" : mode === "setup" ? "Create Account & Sign In" : "Sign In"}
-     </button>
-    </form>
-    {mode === "setup" && (
-     <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:16, cursor:"pointer" }} onClick={() => setMode("login")}>Already have a password? <span style={{ color:"#0EA5E9" }}>Sign in instead</span></p>
+
+    {/* ── Login step ── */}
+    {mode === "login" && (
+     <form onSubmit={doLogin}>
+      <div style={{ marginBottom:16 }}>
+       <label style={lbl}>Email</label>
+       <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@safarnaamaholidays.com" required style={inp} autoFocus />
+      </div>
+      <div style={{ marginBottom:22 }}>
+       <label style={lbl}>Password</label>
+       <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={inp} />
+      </div>
+      {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+      <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+       {loading ? "Sending code…" : "Continue"}
+      </button>
+     </form>
     )}
+
+    {/* ── First-time setup ── */}
+    {mode === "setup" && (
+     <>
+      <div style={{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:8, padding:"10px 14px", fontSize:12.5, color:"#1E40AF", marginBottom:20 }}>
+       <strong>First-time setup:</strong> No passwords are set yet. Enter the admin email and choose a password.
+      </div>
+      <form onSubmit={doSetup}>
+       <div style={{ marginBottom:16 }}>
+        <label style={lbl}>Admin Email</label>
+        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="enquiry@safarnaamaholidays.com" required style={inp} autoFocus />
+       </div>
+       <div style={{ marginBottom:22 }}>
+        <label style={lbl}>Create Password</label>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Min 8 characters" required style={inp} />
+       </div>
+       {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+       <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+        {loading ? "Setting up…" : "Create Account & Sign In"}
+       </button>
+      </form>
+      <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:16, cursor:"pointer" }} onClick={() => setMode("login")}>Already set up? <span style={{ color:"#0EA5E9" }}>Sign in</span></p>
+     </>
+    )}
+
     <p style={{ textAlign:"center", fontSize:11, color:"#CBD5E1", marginTop:24 }}>Authorised personnel only</p>
    </div>
   </div>

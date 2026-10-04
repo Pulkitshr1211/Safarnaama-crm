@@ -124,7 +124,7 @@ function verifyToken(token) {
 }
 
 // Auth middleware — applied to all /api/* except whitelisted paths
-const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/setup", "/api/auth/needs-setup", "/api/health"]);
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/verify-otp", "/api/auth/setup", "/api/auth/needs-setup", "/api/health"]);
 app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
@@ -137,7 +137,43 @@ app.use((req, res, next) => {
  next();
 });
 
-// POST /api/auth/login
+// In-memory OTP store: email → { otp, userId, expiry, attempts }
+const OTP_STORE = new Map();
+const OTP_TTL  = 10 * 60 * 1000; // 10 minutes
+const OTP_MAX_ATTEMPTS = 5;
+
+function generateOTP() {
+ return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function sendOTPEmail(toEmail, otp, userName) {
+ const html = `
+  <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+   <div style="background:#0D2030;padding:24px;border-radius:12px 12px 0 0;text-align:center">
+    <h2 style="color:#fff;margin:0;font-size:18px">✈️ Safarnaama CRM</h2>
+   </div>
+   <div style="background:#f8fafc;padding:28px;border-radius:0 0 12px 12px;border:1px solid #e2e8f0">
+    <p style="color:#374151;font-size:15px">Hi <strong>${userName}</strong>,</p>
+    <p style="color:#374151;font-size:14px">Your one-time login code is:</p>
+    <div style="background:#fff;border:2px dashed #0D2030;border-radius:10px;padding:20px;text-align:center;margin:20px 0">
+     <span style="font-size:40px;font-weight:800;letter-spacing:10px;color:#0D2030">${otp}</span>
+    </div>
+    <p style="color:#64748b;font-size:12px">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
+    <p style="color:#64748b;font-size:12px">If you did not attempt to log in, please ignore this email.</p>
+   </div>
+  </div>`;
+ // Try SendGrid first, fall back to SMTP nodemailer
+ if (SENDGRID_KEY?.startsWith("SG.")) {
+  await sgMail.send({ from: { email: ENQUIRY_EMAIL, name: "Safarnaama CRM" }, to: toEmail, subject: `${otp} — Your Safarnaama CRM login code`, html });
+ } else {
+  const cfg = await getEmailCfg().catch(() => null);
+  if (!cfg?.smtp_host) throw new Error("Email not configured — add SendGrid or SMTP in Settings → Email");
+  const transport = nodemailer.createTransport({ host: cfg.smtp_host, port: Number(cfg.smtp_port)||465, secure: cfg.smtp_ssl!==false, auth: { user: cfg.username, pass: cfg.password }, tls: { rejectUnauthorized: false } });
+  await transport.sendMail({ from: `"Safarnaama CRM" <${cfg.username}>`, to: toEmail, subject: `${otp} — Your Safarnaama CRM login code`, html });
+ }
+}
+
+// POST /api/auth/login — step 1: verify password, send OTP
 app.post("/api/auth/login", async (req, res) => {
  try {
   const { email, password } = req.body;
@@ -148,6 +184,34 @@ app.post("/api/auth/login", async (req, res) => {
   if (!user.password_hash) return res.status(401).json({ error: "Password not set — ask your admin to set it in Settings → Users" });
   const hash = hashPassword(password, user.password_salt || "");
   if (hash !== user.password_hash) return res.status(401).json({ error: "Invalid email or password" });
+  // Password correct — generate & send OTP
+  const otp = generateOTP();
+  OTP_STORE.set(user.email.toLowerCase(), { otp, userId: user.id, expiry: Date.now() + OTP_TTL, attempts: 0 });
+  await sendOTPEmail(user.email, otp, user.name);
+  // Mask email for display: p****@safarnaamaholidays.com
+  const [local, domain] = user.email.split("@");
+  const masked = local.slice(0, 2) + "****@" + domain;
+  res.json({ otpSent: true, maskedEmail: masked });
+ } catch(e) {
+  console.error("[auth/login]", e.message);
+  res.status(500).json({ error: e.message });
+ }
+});
+
+// POST /api/auth/verify-otp — step 2: verify OTP, return token
+app.post("/api/auth/verify-otp", async (req, res) => {
+ try {
+  const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: "Email and OTP required" });
+  const record = OTP_STORE.get(email.trim().toLowerCase());
+  if (!record) return res.status(401).json({ error: "OTP expired or not requested — please log in again" });
+  if (Date.now() > record.expiry) { OTP_STORE.delete(email.toLowerCase()); return res.status(401).json({ error: "OTP expired — please log in again" }); }
+  record.attempts++;
+  if (record.attempts > OTP_MAX_ATTEMPTS) { OTP_STORE.delete(email.toLowerCase()); return res.status(401).json({ error: "Too many incorrect attempts — please log in again" }); }
+  if (record.otp !== otp.trim()) return res.status(401).json({ error: `Incorrect code (${OTP_MAX_ATTEMPTS - record.attempts + 1} attempts left)` });
+  OTP_STORE.delete(email.toLowerCase()); // one-time use
+  const { data: user } = await db.from("crm_users").select("*").eq("id", record.userId).single();
+  if (!user) return res.status(401).json({ error: "User not found" });
   const token = generateToken(user.id);
   const { password_hash, password_salt, ...safeUser } = user;
   res.json({ token, user: safeUser });
