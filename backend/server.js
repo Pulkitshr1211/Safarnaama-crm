@@ -124,7 +124,7 @@ function verifyToken(token) {
 }
 
 // Auth middleware — applied to all /api/* except whitelisted paths
-const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/forgot-password", "/api/auth/health", "/api/health"]);
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/forgot-password", "/api/auth/health", "/api/health", "/api/debug/email"]);
 app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
