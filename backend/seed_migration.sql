@@ -65,9 +65,9 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- ── DEFAULT USERS (seed) ─────────────────────────────────────────────────────
 INSERT INTO crm_users (id, name, email, role, status) VALUES
-('U001', 'Admin User', 'enquiry@SafarnaamaHolidays.com', 'Admin',   'Active'),
-('U002', 'Priya',      'priya@SafarnaamaHolidays.com',   'Manager', 'Active'),
-('U003', 'Arjun',      'arjun@SafarnaamaHolidays.com',   'Agent',   'Active')
+('U001', 'Admin',  'operations@safarnaamaholidays.com', 'Admin',   'Active'),
+('U002', 'Priya',  'priya@SafarnaamaHolidays.com',      'Manager', 'Active'),
+('U003', 'Arjun',  'arjun@SafarnaamaHolidays.com',      'Agent',   'Active')
 ON CONFLICT (id) DO UPDATE SET
   name   = EXCLUDED.name,
   email  = EXCLUDED.email,
@@ -104,10 +104,11 @@ CREATE TABLE IF NOT EXISTS lead_documents (
 CREATE INDEX IF NOT EXISTS idx_lead_documents_lead_id ON lead_documents(lead_id);
 
 -- ── VERIFY ────────────────────────────────────────────────────────────────────
--- ── AUTH: add password + first-login columns to crm_users ────────────────────
+-- ── AUTH: add password + temp-password columns to crm_users ─────────────────
 ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_hash      TEXT;
 ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS password_salt      TEXT;
-ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS first_login_done   BOOLEAN DEFAULT FALSE;
+ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS temp_password_hash TEXT;
+ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS temp_password_salt TEXT;
 
 SELECT 'itineraries' as tbl, COUNT(*) as rows FROM itineraries
 UNION ALL SELECT 'vouchers',    COUNT(*) FROM vouchers

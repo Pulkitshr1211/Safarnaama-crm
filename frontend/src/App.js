@@ -1,4 +1,19 @@
 import { useState, useEffect, useRef } from "react";
+
+// ─── AUTH TOKEN INJECTION ─────────────────────────────────────────────────────
+// Patches global fetch so every /api/* call automatically carries the Bearer
+// token — fixes all bare fetch("/api/...") calls in settings/docs/email/etc.
+const _origFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => {
+ if (typeof url === "string" && (url.startsWith("/api/") || url.includes(":3002/api/"))) {
+  const token = localStorage.getItem("sfn_auth_token");
+  if (token) {
+   opts = { ...opts, headers: { "Authorization": `Bearer ${token}`, ...(opts.headers || {}) } };
+  }
+ }
+ return _origFetch(url, opts);
+};
+
 // ─── BACKEND API BASE ─────────────────────────────────────────────────────────
 // React dev server proxies /api/* → http://localhost:3002 via setupProxy.js
 const API = async (method, path, body, isForm = false) => {
@@ -799,15 +814,18 @@ function PreviewFrame({ html }) {
 function LoginPage({ onLogin }) {
  const [email, setEmail] = useState("");
  const [password, setPassword] = useState("");
- const [otp, setOtp] = useState("");
- const [maskedEmail, setMaskedEmail] = useState("");
+ const [newPassword, setNewPassword] = useState("");
+ const [confirmPassword, setConfirmPassword] = useState("");
  const [err, setErr] = useState("");
+ const [info, setInfo] = useState("");
  const [loading, setLoading] = useState(false);
- const [mode, setMode] = useState("login"); // "login" | "setup" | "otp"
+ const [mode, setMode] = useState("login"); // "login" | "forgot" | "changePassword"
+ const [pendingToken, setPendingToken] = useState(null);
+ const [pendingUser, setPendingUser] = useState(null);
 
  const apiPost = async (endpoint, body) => {
   let res = await fetch(endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
-  if (!res.ok && res.status === 404) {
+  if (!res.ok && (res.status === 0 || res.status === 404)) {
    res = await fetch(`${window.location.protocol}//${window.location.hostname}:3002${endpoint}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
   }
   const data = await res.json();
@@ -815,48 +833,47 @@ function LoginPage({ onLogin }) {
   return data;
  };
 
- useEffect(() => {
-  const urls = ["/api/auth/needs-setup", `${window.location.protocol}//${window.location.hostname}:3002/api/auth/needs-setup`];
-  const tryNext = (i) => {
-   if (i >= urls.length) return;
-   fetch(urls[i]).then(r => r.ok ? r.json() : null).then(d => {
-    if (d?.needsSetup) setMode("setup");
-   }).catch(() => tryNext(i + 1));
-  };
-  tryNext(0);
- }, []);
-
  const doLogin = async (e) => {
   e.preventDefault();
   if (!email || !password) return setErr("Email and password are required");
   setErr(""); setLoading(true);
   try {
    const data = await apiPost("/api/auth/login", { email: email.trim(), password });
-   if (data.otpSent) { setMaskedEmail(data.maskedEmail); setMode("otp"); }
-   else if (data.token) { onLogin(data.user, data.token); } // fallback if OTP disabled
+   if (data.mustChangePassword) {
+    // Logged in with temp password — must set a new permanent one
+    setPendingToken(data.token);
+    setPendingUser(data.user);
+    setMode("changePassword");
+   } else {
+    onLogin(data.user, data.token);
+   }
   } catch(e) { setErr(e.message); }
   setLoading(false);
  };
 
- const doVerifyOtp = async (e) => {
+ const doForgotPassword = async (e) => {
   e.preventDefault();
-  if (!otp || otp.length !== 6) return setErr("Enter the 6-digit code from your email");
+  if (!email) return setErr("Enter your email address");
   setErr(""); setLoading(true);
   try {
-   const data = await apiPost("/api/auth/verify-otp", { email: email.trim(), otp: otp.trim() });
-   onLogin(data.user, data.token);
+   await apiPost("/api/auth/forgot-password", { email: email.trim() });
+   setInfo("A temporary password has been sent to your email. Use it to log in, then you will be asked to set a new password.");
+   setMode("login");
   } catch(e) { setErr(e.message); }
   setLoading(false);
  };
 
- const doSetup = async (e) => {
+ const doChangePassword = async (e) => {
   e.preventDefault();
-  if (!email || !password) return setErr("Email and password are required");
-  if (password.length < 8) return setErr("Password must be at least 8 characters");
+  if (!newPassword || newPassword.length < 8) return setErr("Password must be at least 8 characters");
+  if (newPassword !== confirmPassword) return setErr("Passwords do not match");
   setErr(""); setLoading(true);
   try {
-   const data = await apiPost("/api/auth/setup", { email: email.trim(), password });
-   onLogin(data.user, data.token);
+   await fetch("/api/auth/change-password", {
+    method:"POST", headers:{ "Content-Type":"application/json", "Authorization":`Bearer ${pendingToken}` },
+    body: JSON.stringify({ newPassword })
+   });
+   onLogin(pendingUser, pendingToken);
   } catch(e) { setErr(e.message); }
   setLoading(false);
  };
@@ -873,67 +890,66 @@ function LoginPage({ onLogin }) {
      <p style={{ fontSize:13, color:"#94A3B8", marginTop:5 }}>Safarnaama Holidays — Internal Portal</p>
     </div>
 
-    {/* ── OTP step ── */}
-    {mode === "otp" && (
-     <form onSubmit={doVerifyOtp}>
-      <div style={{ background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:8, padding:"12px 14px", fontSize:13, color:"#166534", marginBottom:20 }}>
-       A 6-digit code was sent to <strong>{maskedEmail}</strong>. Enter it below to sign in.
-      </div>
-      <div style={{ marginBottom:20 }}>
-       <label style={lbl}>Verification Code</label>
-       <input value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="123456" maxLength={6} required autoFocus
-        style={{ ...inp, fontSize:28, fontWeight:700, letterSpacing:12, textAlign:"center" }} />
-      </div>
-      {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
-      <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#16A34A", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
-       {loading ? "Verifying…" : "Verify & Sign In"}
-      </button>
-      <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:14, cursor:"pointer" }} onClick={() => { setMode("login"); setOtp(""); setErr(""); }}>
-       ← Back to login
-      </p>
-     </form>
-    )}
+    {info && <div style={{ background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#166534", marginBottom:16 }}>{info}</div>}
 
-    {/* ── Login step ── */}
+    {/* ── Login ── */}
     {mode === "login" && (
      <form onSubmit={doLogin}>
       <div style={{ marginBottom:16 }}>
        <label style={lbl}>Email</label>
        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@safarnaamaholidays.com" required style={inp} autoFocus />
       </div>
-      <div style={{ marginBottom:22 }}>
+      <div style={{ marginBottom:8 }}>
        <label style={lbl}>Password</label>
        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={inp} />
       </div>
+      <div style={{ textAlign:"right", marginBottom:18 }}>
+       <span style={{ fontSize:12, color:"#0EA5E9", cursor:"pointer" }} onClick={() => { setErr(""); setInfo(""); setMode("forgot"); }}>Forgot password?</span>
+      </div>
       {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
       <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
-       {loading ? "Sending code…" : "Continue"}
+       {loading ? "Signing in…" : "Sign In"}
       </button>
      </form>
     )}
 
-    {/* ── First-time setup ── */}
-    {mode === "setup" && (
-     <>
+    {/* ── Forgot password ── */}
+    {mode === "forgot" && (
+     <form onSubmit={doForgotPassword}>
       <div style={{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:8, padding:"10px 14px", fontSize:12.5, color:"#1E40AF", marginBottom:20 }}>
-       <strong>First-time setup:</strong> No passwords are set yet. Enter the admin email and choose a password.
+       Enter your email and we'll send a temporary password. Use it to log in, then set a new password.
       </div>
-      <form onSubmit={doSetup}>
-       <div style={{ marginBottom:16 }}>
-        <label style={lbl}>Admin Email</label>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="enquiry@safarnaamaholidays.com" required style={inp} autoFocus />
-       </div>
-       <div style={{ marginBottom:22 }}>
-        <label style={lbl}>Create Password</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Min 8 characters" required style={inp} />
-       </div>
-       {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
-       <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
-        {loading ? "Setting up…" : "Create Account & Sign In"}
-       </button>
-      </form>
-      <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:16, cursor:"pointer" }} onClick={() => setMode("login")}>Already set up? <span style={{ color:"#0EA5E9" }}>Sign in</span></p>
-     </>
+      <div style={{ marginBottom:20 }}>
+       <label style={lbl}>Your Email</label>
+       <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@safarnaamaholidays.com" required style={inp} autoFocus />
+      </div>
+      {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+      <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#0D2030", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+       {loading ? "Sending…" : "Send Temporary Password"}
+      </button>
+      <p style={{ textAlign:"center", fontSize:12, color:"#94A3B8", marginTop:16, cursor:"pointer" }} onClick={() => { setErr(""); setMode("login"); }}>← Back to sign in</p>
+     </form>
+    )}
+
+    {/* ── Set new password (after temp password login) ── */}
+    {mode === "changePassword" && (
+     <form onSubmit={doChangePassword}>
+      <div style={{ background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:8, padding:"10px 14px", fontSize:12.5, color:"#92400E", marginBottom:20 }}>
+       You logged in with a temporary password. Please set a new permanent password to continue.
+      </div>
+      <div style={{ marginBottom:16 }}>
+       <label style={lbl}>New Password</label>
+       <input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Min 8 characters" required style={inp} autoFocus />
+      </div>
+      <div style={{ marginBottom:22 }}>
+       <label style={lbl}>Confirm Password</label>
+       <input type="password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Repeat new password" required style={inp} />
+      </div>
+      {err && <div style={{ background:"#FEE2E2", border:"1px solid #FCA5A5", borderRadius:8, padding:"10px 13px", fontSize:13, color:"#DC2626", marginBottom:16 }}>{err}</div>}
+      <button type="submit" disabled={loading} style={{ width:"100%", padding:"13px", background: loading ? "#94A3B8" : "#16A34A", color:"#fff", border:"none", borderRadius:9, fontSize:15, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+       {loading ? "Saving…" : "Set New Password & Sign In"}
+      </button>
+     </form>
     )}
 
     <p style={{ textAlign:"center", fontSize:11, color:"#CBD5E1", marginTop:24 }}>Authorised personnel only</p>
@@ -943,42 +959,7 @@ function LoginPage({ onLogin }) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function App() {
- // ── AUTH ───────────────────────────────────────────────────────────────────
- const [authUser, setAuthUser] = useState(() => {
-  try { const u = localStorage.getItem("sfn_auth_user"); return u ? JSON.parse(u) : null; } catch { return null; }
- });
- const [authChecked, setAuthChecked] = useState(false);
- useEffect(() => {
-  const token = localStorage.getItem("sfn_auth_token");
-  if (!token) { setAuthChecked(true); return; }
-  const base = `${window.location.protocol}//${window.location.hostname}`;
-  const tryUrl = (url) => fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  tryUrl("/api/auth/me").catch(() => tryUrl(`${base}:3002/api/auth/me`))
-   .then(r => r.ok ? r.json() : null)
-   .then(user => {
-    if (user?.id) { setAuthUser(user); localStorage.setItem("sfn_auth_user", JSON.stringify(user)); }
-    else { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); }
-   })
-   .catch(() => {})
-   .finally(() => setAuthChecked(true));
- }, []);
-
- const doLogout = () => { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); };
-
- if (!authChecked) return (
-  <div style={{ minHeight:"100vh", background:"#0D2030", display:"flex", alignItems:"center", justifyContent:"center", color:"#94A3B8", fontSize:14 }}>
-   Loading…
-  </div>
- );
- if (!authUser) return (
-  <LoginPage onLogin={(user, token) => {
-   localStorage.setItem("sfn_auth_token", token);
-   localStorage.setItem("sfn_auth_user", JSON.stringify(user));
-   setAuthUser(user);
-  }} />
- );
- // ──────────────────────────────────────────────────────────────────────────
+function AppInner({ authUser, doLogout }) {
  const [page, setPage] = useState("dashboard");
  // ── PORTAL MODE ────────────────────────────────────────────────────────────
  // If ?portal=<id> is in the URL, load that white-label config and apply its branding
@@ -3342,14 +3323,17 @@ function PageEmail({ leads, toast$ }) {
  const sendEmail = async () => {
   if (!compose.to.trim()||!compose.subject.trim()) return toast$("To and Subject are required", true);
   setSending(true);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
    const readAsBase64 = f => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=e=>res(e.target.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(f); });
    const attachments = await Promise.all(attachFiles.map(async f => ({ filename:f.name, content:await readAsBase64(f), contentType:f.type||"application/octet-stream" })));
-   const res = await fetch("/api/email/send", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ ...compose, attachments }) });
+   const res = await fetch("/api/email/send", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ ...compose, attachments }), signal: ctrl.signal });
+   clearTimeout(timer);
    const d = await res.json();
    if (res.ok) { toast$("Email sent!"); setShowCompose(false); setCompose({to:"",subject:"",body:"",inReplyTo:"",references:""}); setAttachFiles([]); if(selectedLead) fetchEmails(selectedLead); }
    else toast$(d.error||"Send failed", true);
-  } catch { toast$("Send failed", true); }
+  } catch(e) { clearTimeout(timer); toast$(e.name === "AbortError" ? "Email timed out — check SMTP settings" : "Send failed: " + e.message, true); }
   setSending(false);
  };
 
@@ -10108,4 +10092,42 @@ body{padding-bottom:80px}
   />
   </>
  );
+}
+
+// ─── AUTH SHELL ───────────────────────────────────────────────────────────────
+export default function App() {
+ const [authUser, setAuthUser] = useState(() => {
+  try { const u = localStorage.getItem("sfn_auth_user"); return u ? JSON.parse(u) : null; } catch { return null; }
+ });
+ const [authChecked, setAuthChecked] = useState(false);
+ useEffect(() => {
+  const token = localStorage.getItem("sfn_auth_token");
+  if (!token) { setAuthChecked(true); return; }
+  const base = `${window.location.protocol}//${window.location.hostname}`;
+  const tryUrl = (url) => fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  tryUrl("/api/auth/me").catch(() => tryUrl(`${base}:3002/api/auth/me`))
+   .then(r => r.ok ? r.json() : null)
+   .then(user => {
+    if (user?.id) { setAuthUser(user); localStorage.setItem("sfn_auth_user", JSON.stringify(user)); }
+    else { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); }
+   })
+   .catch(() => {})
+   .finally(() => setAuthChecked(true));
+ }, []);
+
+ const doLogout = () => { localStorage.removeItem("sfn_auth_token"); localStorage.removeItem("sfn_auth_user"); setAuthUser(null); };
+
+ if (!authChecked) return (
+  <div style={{ minHeight:"100vh", background:"#0D2030", display:"flex", alignItems:"center", justifyContent:"center", color:"#94A3B8", fontSize:14 }}>
+   Loading…
+  </div>
+ );
+ if (!authUser) return (
+  <LoginPage onLogin={(user, token) => {
+   localStorage.setItem("sfn_auth_token", token);
+   localStorage.setItem("sfn_auth_user", JSON.stringify(user));
+   setAuthUser(user);
+  }} />
+ );
+ return <AppInner authUser={authUser} doLogout={doLogout} />;
 }

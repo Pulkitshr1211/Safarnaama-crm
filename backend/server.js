@@ -124,7 +124,7 @@ function verifyToken(token) {
 }
 
 // Auth middleware — applied to all /api/* except whitelisted paths
-const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/verify-otp", "/api/auth/setup", "/api/auth/needs-setup", "/api/health"]);
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/forgot-password", "/api/auth/health", "/api/health"]);
 app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
@@ -137,43 +137,48 @@ app.use((req, res, next) => {
  next();
 });
 
-// In-memory OTP store: email → { otp, userId, expiry, attempts }
-const OTP_STORE = new Map();
-const OTP_TTL  = 10 * 60 * 1000; // 10 minutes
-const OTP_MAX_ATTEMPTS = 5;
-
-function generateOTP() {
- return Math.floor(100000 + Math.random() * 900000).toString();
+// Generate a readable temporary password: Sfn-XXXXXXXX
+function generateTempPassword() {
+ return "Sfn-" + crypto.randomBytes(4).toString("hex").toUpperCase();
 }
 
-async function sendOTPEmail(toEmail, otp, userName) {
- const html = `
-  <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-   <div style="background:#0D2030;padding:24px;border-radius:12px 12px 0 0;text-align:center">
-    <h2 style="color:#fff;margin:0;font-size:18px">✈️ Safarnaama CRM</h2>
-   </div>
-   <div style="background:#f8fafc;padding:28px;border-radius:0 0 12px 12px;border:1px solid #e2e8f0">
-    <p style="color:#374151;font-size:15px">Hi <strong>${userName}</strong>,</p>
-    <p style="color:#374151;font-size:14px">Your one-time login code is:</p>
-    <div style="background:#fff;border:2px dashed #0D2030;border-radius:10px;padding:20px;text-align:center;margin:20px 0">
-     <span style="font-size:40px;font-weight:800;letter-spacing:10px;color:#0D2030">${otp}</span>
-    </div>
-    <p style="color:#64748b;font-size:12px">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
-    <p style="color:#64748b;font-size:12px">If you did not attempt to log in, please ignore this email.</p>
-   </div>
-  </div>`;
- // Try SendGrid first, fall back to SMTP nodemailer
+// Send an email via SendGrid or SMTP
+async function sendCrmEmail(toEmail, subject, html) {
  if (SENDGRID_KEY?.startsWith("SG.")) {
-  await sgMail.send({ from: { email: ENQUIRY_EMAIL, name: "Safarnaama CRM" }, to: toEmail, subject: `${otp} — Your Safarnaama CRM login code`, html });
+  await sgMail.send({ from: { email: ENQUIRY_EMAIL, name: "Safarnaama CRM" }, to: toEmail, subject, html });
  } else {
   const cfg = await getEmailCfg().catch(() => null);
   if (!cfg?.smtp_host) throw new Error("Email not configured — add SendGrid or SMTP in Settings → Email");
   const transport = nodemailer.createTransport({ host: cfg.smtp_host, port: Number(cfg.smtp_port)||465, secure: cfg.smtp_ssl!==false, auth: { user: cfg.username, pass: cfg.password }, tls: { rejectUnauthorized: false } });
-  await transport.sendMail({ from: `"Safarnaama CRM" <${cfg.username}>`, to: toEmail, subject: `${otp} — Your Safarnaama CRM login code`, html });
+  await transport.sendMail({ from: `"Safarnaama CRM" <${cfg.username}>`, to: toEmail, subject, html });
  }
 }
 
-// POST /api/auth/login — step 1: verify password, send OTP
+// Auto-seed the admin user with default credentials on first start
+const DEFAULT_ADMIN_EMAIL = "operations@safarnaamaholidays.com";
+const DEFAULT_ADMIN_PASS  = "OP@123456";
+async function autoSeedAdmin() {
+ if (!supabase) return;
+ try {
+  // Upsert the admin user row (creates if missing, updates email/role if ID exists)
+  await db.from("crm_users").upsert(
+   { id: "U001", name: "Admin", email: DEFAULT_ADMIN_EMAIL, role: "Admin", status: "Active" },
+   { onConflict: "id", ignoreDuplicates: false }
+  );
+  // If admin has no password yet, set the default
+  const { data: user } = await db.from("crm_users").select("password_hash").ilike("email", DEFAULT_ADMIN_EMAIL).single();
+  if (!user?.password_hash) {
+   const salt = generateSalt();
+   const hash = hashPassword(DEFAULT_ADMIN_PASS, salt);
+   await db.from("crm_users").update({ password_hash: hash, password_salt: salt }).ilike("email", DEFAULT_ADMIN_EMAIL);
+   console.log("✅ Admin account seeded:", DEFAULT_ADMIN_EMAIL);
+  }
+ } catch(e) {
+  console.warn("⚠  autoSeedAdmin failed:", e.message);
+ }
+}
+
+// POST /api/auth/login — verify password, return token
 app.post("/api/auth/login", async (req, res) => {
  try {
   const { email, password } = req.body;
@@ -181,48 +186,27 @@ app.post("/api/auth/login", async (req, res) => {
   const { data: user, error } = await db.from("crm_users")
    .select("*").ilike("email", email.trim()).eq("status", "Active").limit(1).single();
   if (error || !user) return res.status(401).json({ error: "Invalid email or password" });
-  if (!user.password_hash) return res.status(401).json({ error: "Password not set — ask your admin to set it in Settings → Users" });
-  const hash = hashPassword(password, user.password_salt || "");
-  if (hash !== user.password_hash) return res.status(401).json({ error: "Invalid email or password" });
-  // Returning user — skip OTP, return token directly
-  if (user.first_login_done) {
-   const token = generateToken(user.id);
-   const { password_hash, password_salt, ...safeUser } = user;
-   return res.json({ token, user: safeUser });
+  if (!user.password_hash) return res.status(401).json({ error: "No password set — contact your admin" });
+
+  // Check temp password first (if set)
+  let usedTemp = false;
+  if (user.temp_password_hash && user.temp_password_salt) {
+   const tempHash = hashPassword(password, user.temp_password_salt);
+   if (tempHash === user.temp_password_hash) usedTemp = true;
   }
-  // First-time login — send OTP to verify email ownership
-  const otp = generateOTP();
-  OTP_STORE.set(user.email.toLowerCase(), { otp, userId: user.id, expiry: Date.now() + OTP_TTL, attempts: 0 });
-  await sendOTPEmail(user.email, otp, user.name);
-  const [local, domain] = user.email.split("@");
-  const masked = local.slice(0, 2) + "****@" + domain;
-  res.json({ otpSent: true, maskedEmail: masked });
+  // Check permanent password
+  if (!usedTemp) {
+   const hash = hashPassword(password, user.password_salt || "");
+   if (hash !== user.password_hash) return res.status(401).json({ error: "Invalid email or password" });
+  }
+
+  const token = generateToken(user.id);
+  const { password_hash, password_salt, temp_password_hash, temp_password_salt, ...safeUser } = user;
+  res.json({ token, user: safeUser, mustChangePassword: usedTemp });
  } catch(e) {
   console.error("[auth/login]", e.message);
   res.status(500).json({ error: e.message });
  }
-});
-
-// POST /api/auth/verify-otp — step 2: verify OTP, return token
-app.post("/api/auth/verify-otp", async (req, res) => {
- try {
-  const { email, otp } = req.body;
-  if (!email || !otp) return res.status(400).json({ error: "Email and OTP required" });
-  const record = OTP_STORE.get(email.trim().toLowerCase());
-  if (!record) return res.status(401).json({ error: "OTP expired or not requested — please log in again" });
-  if (Date.now() > record.expiry) { OTP_STORE.delete(email.toLowerCase()); return res.status(401).json({ error: "OTP expired — please log in again" }); }
-  record.attempts++;
-  if (record.attempts > OTP_MAX_ATTEMPTS) { OTP_STORE.delete(email.toLowerCase()); return res.status(401).json({ error: "Too many incorrect attempts — please log in again" }); }
-  if (record.otp !== otp.trim()) return res.status(401).json({ error: `Incorrect code (${OTP_MAX_ATTEMPTS - record.attempts + 1} attempts left)` });
-  OTP_STORE.delete(email.toLowerCase()); // one-time use
-  const { data: user } = await db.from("crm_users").select("*").eq("id", record.userId).single();
-  if (!user) return res.status(401).json({ error: "User not found" });
-  // Mark first login complete — OTP won't be required again
-  await db.from("crm_users").update({ first_login_done: true }).eq("id", record.userId);
-  const token = generateToken(user.id);
-  const { password_hash, password_salt, ...safeUser } = user;
-  res.json({ token, user: { ...safeUser, first_login_done: true } });
- } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /api/auth/me — validate token + return user
@@ -236,65 +220,70 @@ app.get("/api/auth/me", (req, res, next) => {
 }, async (req, res) => {
  const { data: user } = await db.from("crm_users").select("*").eq("id", req.userId).single();
  if (!user) return res.status(401).json({ error: "User not found" });
- const { password_hash, password_salt, ...safeUser } = user;
+ const { password_hash, password_salt, temp_password_hash, temp_password_salt, ...safeUser } = user;
  res.json(safeUser);
 });
 
-// GET /api/auth/needs-setup — returns true when no user has a password yet
-app.get("/api/auth/needs-setup", async (req, res) => {
+// POST /api/auth/forgot-password — generate temp password and email it
+app.post("/api/auth/forgot-password", async (req, res) => {
  try {
-  const { data } = await db.from("crm_users").select("id").not("password_hash", "is", null).limit(1);
-  res.json({ needsSetup: !data?.length });
- } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// POST /api/auth/setup — first-run only: set a password when no passwords exist
-app.post("/api/auth/setup", async (req, res) => {
- try {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
-  if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
-  const { data: existing } = await db.from("crm_users").select("password_hash").not("password_hash", "is", null).limit(1);
-  if (existing?.length) return res.status(403).json({ error: "Setup already complete — use login" });
-  const { data: user } = await db.from("crm_users").select("*").ilike("email", email.trim()).single();
-  if (!user) return res.status(404).json({ error: "No user found with that email" });
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email required" });
+  const { data: user } = await db.from("crm_users").select("*").ilike("email", email.trim()).eq("status", "Active").limit(1).single();
+  // Always return success to prevent email enumeration
+  if (!user) return res.json({ ok: true, message: "If that email exists, a temporary password has been sent." });
+  const tempPass = generateTempPassword();
   const salt = generateSalt();
-  const hash = hashPassword(password, salt);
-  await db.from("crm_users").update({ password_hash: hash, password_salt: salt }).eq("id", user.id);
-  const token = generateToken(user.id);
-  const { password_hash, password_salt, ...safeUser } = { ...user, password_hash: hash, password_salt: salt };
-  res.json({ token, user: safeUser, message: "Setup complete" });
- } catch(e) { res.status(500).json({ error: e.message }); }
+  const hash = hashPassword(tempPass, salt);
+  await db.from("crm_users").update({ temp_password_hash: hash, temp_password_salt: salt }).eq("id", user.id);
+  const html = `
+   <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+    <div style="background:#0D2030;padding:24px;border-radius:12px 12px 0 0;text-align:center">
+     <h2 style="color:#fff;margin:0;font-size:18px">✈️ Safarnaama CRM</h2>
+    </div>
+    <div style="background:#f8fafc;padding:28px;border-radius:0 0 12px 12px;border:1px solid #e2e8f0">
+     <p style="color:#374151;font-size:15px">Hi <strong>${user.name}</strong>,</p>
+     <p style="color:#374151;font-size:14px">Your temporary password is:</p>
+     <div style="background:#fff;border:2px dashed #0D2030;border-radius:10px;padding:20px;text-align:center;margin:20px 0">
+      <span style="font-size:28px;font-weight:800;letter-spacing:4px;color:#0D2030;font-family:monospace">${tempPass}</span>
+     </div>
+     <p style="color:#64748b;font-size:13px">Log in with this password, then you will be asked to set a new permanent password.</p>
+     <p style="color:#64748b;font-size:12px">If you did not request this, please ignore this email.</p>
+    </div>
+   </div>`;
+  await sendCrmEmail(user.email, "Safarnaama CRM — Temporary Password", html);
+  res.json({ ok: true, message: "Temporary password sent to your email." });
+ } catch(e) {
+  console.error("[auth/forgot-password]", e.message);
+  res.status(500).json({ error: "Failed to send email: " + e.message });
+ }
 });
 
-// POST /api/auth/change-password — logged-in user changes own password
+// POST /api/auth/change-password — set new permanent password (clears temp)
 app.post("/api/auth/change-password", async (req, res) => {
  try {
-  const { currentPassword, newPassword } = req.body;
-  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
-  const { data: user } = await db.from("crm_users").select("*").eq("id", req.userId).single();
-  if (!user) return res.status(404).json({ error: "User not found" });
-  if (user.password_hash) {
-   const hash = hashPassword(currentPassword, user.password_salt || "");
-   if (hash !== user.password_hash) return res.status(401).json({ error: "Current password is incorrect" });
-  }
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
   const salt = generateSalt();
   const newHash = hashPassword(newPassword, salt);
-  await db.from("crm_users").update({ password_hash: newHash, password_salt: salt }).eq("id", user.id);
+  await db.from("crm_users").update({
+   password_hash: newHash, password_salt: salt,
+   temp_password_hash: null, temp_password_salt: null
+  }).eq("id", req.userId);
   res.json({ ok: true });
  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/auth/set-user-password — admin sets another user's password
+// POST /api/auth/set-user-password — admin sets another user's default password
 app.post("/api/auth/set-user-password", async (req, res) => {
  try {
   const { userId, newPassword } = req.body;
-  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
+  if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
   const { data: admin } = await db.from("crm_users").select("role").eq("id", req.userId).single();
   if ((admin?.role || "").toLowerCase() !== "admin") return res.status(403).json({ error: "Admin access required" });
   const salt = generateSalt();
   const hash = hashPassword(newPassword, salt);
-  await db.from("crm_users").update({ password_hash: hash, password_salt: salt }).eq("id", userId);
+  await db.from("crm_users").update({ password_hash: hash, password_salt: salt, temp_password_hash: null, temp_password_salt: null }).eq("id", userId);
   res.json({ ok: true });
  } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2051,16 +2040,16 @@ async function saveEmailCfg(body) {
 
 function buildSmtpTransport(cfg) {
  const port   = Number(cfg.smtp_port) || 465;
- const secure = [true, "true", 1, "1"].includes(cfg.smtp_ssl); // robust boolean regardless of JSON storage
+ const secure = [true, "true", 1, "1"].includes(cfg.smtp_ssl);
  return nodemailer.createTransport({
   host: cfg.smtp_host || cfg.imap_host,
   port,
   secure,
   auth: { user: cfg.username, pass: cfg.password },
   tls: { rejectUnauthorized: false },
-  connectionTimeout: 20000,  // 20s to open TCP connection
-  greetingTimeout:   15000,  // 15s to receive SMTP greeting
-  socketTimeout:     30000,  // 30s idle socket timeout
+  connectionTimeout: 10000,
+  greetingTimeout:   8000,
+  socketTimeout:     15000,
  });
 }
 
@@ -2071,9 +2060,9 @@ function buildImapClient(cfg) {
   secure: cfg.imap_ssl !== false,
   auth: { user: cfg.username, pass: cfg.password },
   tls: { rejectUnauthorized: false },
-  connectionTimeout: 20000,
-  greetingTimeout: 15000,
-  socketTimeout: 90000,
+  connectionTimeout: 10000,
+  greetingTimeout: 8000,
+  socketTimeout: 20000,
   logger: false,
  });
 }
@@ -2345,17 +2334,18 @@ app.post("/api/email/send", async (req, res) => {
   const transporter = buildSmtpTransport(cfg);
   await transporter.sendMail(mail);
 
-  // Append copy to IMAP Sent folder so it appears in the Email module
-  if (rawMessage) {
-   try {
-    const imap = buildImapClient(cfg);
-    await imap.connect();
-    await imap.append(cfg.sent_folder || "Sent", rawMessage, ["\\Seen"]);
-    await imap.logout();
-   } catch (e) { console.warn("[email-send] Could not save to Sent folder:", e.message); }
-  }
-
+  // Respond immediately — append to Sent folder in background (non-blocking)
   res.json({ success: true });
+  if (rawMessage) {
+   (async () => {
+    try {
+     const imap = buildImapClient(cfg);
+     await imap.connect();
+     await imap.append(cfg.sent_folder || "Sent", rawMessage, ["\\Seen"]);
+     await imap.logout();
+    } catch (e) { console.warn("[email-send] Could not save to Sent folder:", e.message); }
+   })();
+  }
  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4197,4 +4187,5 @@ app.listen(PORT, async () => {
   }
  } catch (e) { console.warn(` Email config check failed: ${e.message}`); }
  console.log(` Inbound webhook: POST /webhook/inbound-email\n`);
+ await autoSeedAdmin();
 });
