@@ -124,7 +124,7 @@ function verifyToken(token) {
 }
 
 // Auth middleware — applied to all /api/* except whitelisted paths
-const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/setup", "/api/health"]);
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/setup", "/api/auth/needs-setup", "/api/health"]);
 app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
@@ -167,6 +167,14 @@ app.get("/api/auth/me", (req, res, next) => {
  if (!user) return res.status(401).json({ error: "User not found" });
  const { password_hash, password_salt, ...safeUser } = user;
  res.json(safeUser);
+});
+
+// GET /api/auth/needs-setup — returns true when no user has a password yet
+app.get("/api/auth/needs-setup", async (req, res) => {
+ try {
+  const { data } = await db.from("crm_users").select("id").not("password_hash", "is", null).limit(1);
+  res.json({ needsSetup: !data?.length });
+ } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /api/auth/setup — first-run only: set a password when no passwords exist

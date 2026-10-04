@@ -802,25 +802,17 @@ function LoginPage({ onLogin }) {
  const [err, setErr] = useState("");
  const [loading, setLoading] = useState(false);
  const [mode, setMode] = useState("login"); // "login" | "setup"
- const [setupChecked, setSetupChecked] = useState(false);
 
  useEffect(() => {
-  fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) })
-   .then(r => r.json()).then(d => {
-    if (d.error === "Email and password required") setSetupChecked(true); // setup endpoint reachable + no passwords set
-   }).catch(() => setSetupChecked(true));
-  fetch("/api/auth/me", { headers: { "Authorization": "Bearer invalid" } })
-   .then(r => { if (r.status === 403) setMode("setup"); setSetupChecked(true); });
+  const urls = ["/api/auth/needs-setup", `${window.location.protocol}//${window.location.hostname}:3002/api/auth/needs-setup`];
+  const tryNext = (i) => {
+   if (i >= urls.length) return;
+   fetch(urls[i]).then(r => r.ok ? r.json() : null).then(d => {
+    if (d?.needsSetup) setMode("setup");
+   }).catch(() => tryNext(i + 1));
+  };
+  tryNext(0);
  }, []);
-
- const checkFirstRun = async () => {
-  try {
-   const r = await fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-   const d = await r.json();
-   if (d.error === "Setup already complete — use login") { setMode("login"); return false; }
-   return true;
-  } catch { return false; }
- };
 
  const doSubmit = async (e) => {
   e.preventDefault();
