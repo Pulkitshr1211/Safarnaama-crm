@@ -4134,16 +4134,18 @@ app.get("/api/itineraries", async (req, res) => {
  if (error) return res.status(500).json({ error: error.message });
  res.json(data || []);
 });
+const ITIN_COLS = new Set(["id","lead_id","lead_name","title","destination","start_date","end_date","pax","kids","status","notes","highlights","flights","hotels","days","inclusions","exclusions","markup_pct","selling_price","cover_image_url","tour_type","city","version","special_instructions","option2_enabled","option1_title","option2_title","option2_hotels","option2_price","option2_inclusions","option2_exclusions","created_at","updated_at"]);
+const sanitizeItin = obj => Object.fromEntries(Object.entries(obj).filter(([k]) => ITIN_COLS.has(k)));
 app.post("/api/itineraries", async (req, res) => {
- const row = { ...req.body, created_at: req.body.created_at || new Date() };
+ const row = sanitizeItin({ ...req.body, created_at: req.body.created_at || new Date() });
  if (!row.id) row.id = genId("IT");
  const { data, error } = await db.from("itineraries").upsert(row, { onConflict: "id" }).select().single();
- if (error) return res.status(400).json({ error: error.message });
+ if (error) { console.error("[itineraries POST]", error.message); return res.status(400).json({ error: error.message }); }
  res.status(201).json(data);
 });
 app.patch("/api/itineraries/:id", async (req, res) => {
- const { data, error } = await db.from("itineraries").update({ ...req.body, updated_at: new Date() }).eq("id", req.params.id).select().single();
- if (error) return res.status(400).json({ error: error.message });
+ const { data, error } = await db.from("itineraries").update(sanitizeItin({ ...req.body, updated_at: new Date() })).eq("id", req.params.id).select().single();
+ if (error) { console.error("[itineraries PATCH]", error.message); return res.status(400).json({ error: error.message }); }
  res.json(data);
 });
 app.delete("/api/itineraries/:id", async (req, res) => {
