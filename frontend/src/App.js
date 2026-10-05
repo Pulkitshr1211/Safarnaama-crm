@@ -301,7 +301,7 @@ const useRefData = (cacheKey, url) => {
  return [data, loading, doFetch];
 };
 
-const genId = prefix => `${prefix}${Date.now().toString().slice(-6)}`;
+const genId = prefix => `${prefix}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 const genQC = () => `QC-${new Date().getFullYear().toString().slice(-2)}${String(new Date().getMonth()+1).padStart(2,"0")}-${Math.floor(Math.random()*9000+1000)}`;
 const today = () => new Date().toISOString().split("T")[0];
 // ─── PORTAL URL HELPER ────────────────────────────────────────────────────────
