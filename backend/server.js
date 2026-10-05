@@ -89,7 +89,8 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 // In production the backend serves the compiled React app from /frontend/build.
 // API routes are registered AFTER this, so /api/... requests fall through correctly.
 if (process.env.NODE_ENV === "production") {
- const BUILD = path.join(__dirname, "../frontend/build");
+ // In production Railway copies frontend/build → backend/public during the build step
+ const BUILD = path.join(__dirname, "public");
  app.use(express.static(BUILD, { index: "index.html" }));
 }
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
@@ -4391,7 +4392,7 @@ app.delete("/api/leads/documents/:docId", async (req, res) => {
 // REACT ROUTER FALLBACK (production) — any non-API route serves index.html
 // ─────────────────────────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === "production") {
- const BUILD = path.join(__dirname, "../frontend/build");
+ const BUILD = path.join(__dirname, "public");
  app.get(/^(?!\/api|\/health|\/webhook).*/, (req, res) => {
   res.sendFile(path.join(BUILD, "index.html"));
  });
