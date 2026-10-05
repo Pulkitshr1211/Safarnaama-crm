@@ -3508,6 +3508,34 @@ app.post("/api/flights/search", async (req, res) => {
  res.json({ data: results, errors, meta: { sources: { amadeus: !!AMADEUS_CLIENT_ID, tripjack: !!TJ_KEY } } });
 });
 
+// Multi-city flight search — accepts raw TripJack routeInfos (for UAT and multi-city flows)
+app.post("/api/flights/search-multicity", async (req, res) => {
+ if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
+ const { routeInfos, paxInfo, cabinClass="ECONOMY", searchModifiers } = req.body;
+ if (!routeInfos?.length) return res.status(400).json({ error:"routeInfos required" });
+ const searchQuery = { cabinClass, paxInfo: paxInfo||{ ADULT:"1", CHILD:"0", INFANT:"0" }, routeInfos, searchModifiers: searchModifiers||{ isDirectFlight:false, isConnectingFlight:true } };
+ uatInitSession(searchQuery);
+ uatSave("SearchRequest.json", { searchQuery });
+ try {
+  const data = await tjPost("/fms/v1/air-search-all", { searchQuery });
+  uatSave("SearchResponse.json", data);
+  const tripInfos = data?.searchResult?.tripInfos || {};
+  // Return each segment's price options keyed by segment index
+  const segments = {};
+  for (const [key, trips] of Object.entries(tripInfos)) {
+   segments[key] = (trips||[]).flatMap(trip =>
+    (trip.totalPriceList||[]).map(p => ({
+     _source: "tripjack", _priceId: p.id, _fareIdentifier: p.fareIdentifier||"",
+     price: { grandTotal: String((p.fD||p.fd)?.ADULT?.fC?.TF||0), currency:"INR" }
+    }))
+   ).filter(s => s._priceId);
+  }
+  res.json({ data: segments, searchId: data?.searchResult?.searchId, status: data?.status });
+ } catch(e) {
+  res.status(500).json({ error: e.response?.data?.message||e.message, detail: e.response?.data });
+ }
+});
+
 // Confirm live pricing — routes to TripJack review or Amadeus pricing based on _source
 app.post("/api/flights/price", async (req, res) => {
  try {
