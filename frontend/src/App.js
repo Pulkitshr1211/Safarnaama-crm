@@ -1903,7 +1903,7 @@ Return JSON only:
   onEmailItin={(itin, tpl) => {
    const lead = leads.find(l => l.id === itin.lead_id);
    const stripData = v => (!v || v.startsWith("data:")) ? "" : v;
-   const emailDoc = { ...itin, cover_image_url:stripData(itin.cover_image_url), hotels:(itin.hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), option2_hotels:(itin.option2_hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), days:(itin.days||[]).map(d=>({...d,image_url:stripData(d.image_url)})) };
+   const emailDoc = { ...itin, cover_image_url:itin.cover_image_url||"", hotels:(itin.hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), option2_hotels:(itin.option2_hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), days:(itin.days||[]).map(d=>({...d,image_url:stripData(d.image_url)})) };
    setEmailDocModal({ to:lead?.email||"", leadName:lead?.name||itin.lead_name||"", subject:`Your Itinerary — ${itin.destination||itin.title||"Your Trip"} | ${companyProfile?.name||"Safarnaama"}`, html:genItinHTML(emailDoc, tpl||"Classic", bizSettings, companyProfile) });
   }}
   onWhatsAppItin={(itin) => {
@@ -2594,7 +2594,7 @@ Return JSON only:
    const stripData = v => (!v || v.startsWith("data:")) ? "" : v;
    const emailDoc = {
     ...doc,
-    cover_image_url: stripData(doc.cover_image_url),
+    cover_image_url: doc.cover_image_url || "",
     hotels: (doc.hotels||[]).map(h=>({...h, image_url:stripData(h.image_url)})),
     option2_hotels: (doc.option2_hotels||[]).map(h=>({...h, image_url:stripData(h.image_url)})),
     days: (doc.days||[]).map(d=>({...d, image_url:stripData(d.image_url)})),
