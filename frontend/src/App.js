@@ -785,6 +785,19 @@ function compressImgForPrint(dataUrl, maxWidth = 1100, quality = 0.82) {
   });
 }
 
+// Upload a base64 image to backend temp store → returns a hosted URL email clients can fetch
+async function uploadTempImg(dataUrl) {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+  if (!match) return "";
+  const [, contentType, b64] = match;
+  try {
+    const r = await fetch("/api/temp-img", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ data: b64, contentType }) });
+    if (!r.ok) return "";
+    const j = await r.json();
+    return j.url || "";
+  } catch { return ""; }
+}
+
 function genItinHTML(it, template, biz, profile) {
   template = template||"Classic"; biz = biz||{}; profile = profile||{};
   const co = {
@@ -1904,10 +1917,17 @@ Return JSON only:
  {page==="dashboard" && <PageDashboard leads={leads} quotes={quotes} invoices={invoices} vendors={vendors} tasks={tasks} itineraries={itineraries} setPage={setPage} bizSettings={bizSettings}/>}
  {page==="leads" && <PageLeads leads={leads} setLeads={setLeads} users={users} currentUser={currentUser} onPickMethod={doPickMethod} onDownloadLeads={downloadLeads} onUploadLeads={uploadLeadsFile} bizSettings={bizSettings} setBizSettings={setBizSettings} refData={refData} refLoading={refLoading} toast$={toast$} onPreview={doPreview} invoices={invoices} vouchers={vouchers} itineraries={itineraries} companyProfile={companyProfile}/>}
  {page==="itinerary" && <PageItinerary leads={leads} itineraries={itineraries} setItineraries={setItineraries} initData={initItinerary} setInitData={setInitItinerary} toast$={toast$} onRequestQuote={payload => doPickMethod(payload.lead||payload, "quote")} brand={brand} quotes={quotes} bizSettings={bizSettings} setBizSettings={setBizSettings} refData={refData} refLoading={refLoading} refreshRef={refreshRef} onPreview={doPreview} vendors={vendors} mediaData={mediaData||[]} refreshMedia={refreshMedia}
-  onEmailItin={(itin, tpl) => {
+  onEmailItin={async (itin, tpl) => {
    const lead = leads.find(l => l.id === itin.lead_id);
    const stripData = v => (!v || v.startsWith("data:")) ? "" : v;
-   const emailDoc = { ...itin, cover_image_url:itin.cover_image_url||"", hotels:(itin.hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), option2_hotels:(itin.option2_hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), days:(itin.days||[]).map(d=>({...d,image_url:stripData(d.image_url)})) };
+   let emailCover = itin.cover_image_url || "";
+   if (emailCover.startsWith("data:")) {
+    try {
+     const small = await compressImgForPrint(emailCover, 800, 0.72);
+     emailCover = await uploadTempImg(small) || "";
+    } catch { emailCover = ""; }
+   }
+   const emailDoc = { ...itin, cover_image_url:emailCover, hotels:(itin.hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), option2_hotels:(itin.option2_hotels||[]).map(h=>({...h,image_url:stripData(h.image_url)})), days:(itin.days||[]).map(d=>({...d,image_url:stripData(d.image_url)})) };
    setEmailDocModal({ to:lead?.email||"", leadName:lead?.name||itin.lead_name||"", subject:`Your Itinerary — ${itin.destination||itin.title||"Your Trip"} | ${companyProfile?.name||"Safarnaama"}`, html:genItinHTML(emailDoc, tpl||"Classic", bizSettings, companyProfile) });
   }}
   onWhatsAppItin={(itin) => {
@@ -2593,12 +2613,19 @@ Return JSON only:
    window.open(blobUrl, "_blank");
    setTimeout(() => URL.revokeObjectURL(blobUrl), 300000);
   };
-  const openEmailModal = () => {
+  const openEmailModal = async () => {
    const lead = leads.find(l => l.id === doc.lead_id);
    const stripData = v => (!v || v.startsWith("data:")) ? "" : v;
+   let emailCover = doc.cover_image_url || "";
+   if (emailCover.startsWith("data:")) {
+    try {
+     const small = await compressImgForPrint(emailCover, 800, 0.72);
+     emailCover = await uploadTempImg(small) || "";
+    } catch { emailCover = ""; }
+   }
    const emailDoc = {
     ...doc,
-    cover_image_url: doc.cover_image_url || "",
+    cover_image_url: emailCover,
     hotels: (doc.hotels||[]).map(h=>({...h, image_url:stripData(h.image_url)})),
     option2_hotels: (doc.option2_hotels||[]).map(h=>({...h, image_url:stripData(h.image_url)})),
     days: (doc.days||[]).map(d=>({...d, image_url:stripData(d.image_url)})),
@@ -2817,7 +2844,7 @@ function SendItinEmailModal({ data, onClose, toast$ }) {
       style={{ ...inp, resize:"vertical", lineHeight:1.65 }}/>
     </div>
     <div style={{ fontSize:11, color:"#64748B", background:"#F8FAFC", border:"1px solid #E6ECF5", borderRadius:7, padding:"8px 12px", marginBottom:18 }}>
-     The full itinerary (text content, hotels, day-plan) is attached as a formatted email. Cover images are excluded to keep the email size small.
+     The itinerary is sent as a formatted HTML email with your cover photo embedded. Hotel and day images are loaded from the web — the recipient may need to click "Show images" in their email app to see them.
     </div>
     <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
      <Btn v="ghost" onClick={onClose}>Cancel</Btn>

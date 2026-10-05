@@ -2327,6 +2327,35 @@ app.post("/api/email/body", async (req, res) => {
  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// In-memory store for temporarily hosted images (used for email cover photos)
+const _tempImgs = new Map(); // id → { b64, contentType, ts }
+const TEMP_IMG_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+function _cleanTempImgs() { const now = Date.now(); for (const [k,v] of _tempImgs) if (now - v.ts > TEMP_IMG_TTL) _tempImgs.delete(k); }
+
+// POST /api/temp-img — store a base64 image and return a hosted URL
+app.post("/api/temp-img", (req, res) => {
+ const { data, contentType } = req.body || {};
+ if (!data) return res.status(400).json({ error: "data required" });
+ _cleanTempImgs();
+ const id = crypto.randomUUID();
+ _tempImgs.set(id, { b64: data, contentType: contentType || "image/jpeg", ts: Date.now() });
+ const publicHost = process.env.BASE_URL
+   || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+   || (req.headers["x-forwarded-host"] ? `https://${req.headers["x-forwarded-host"]}` : null)
+   || `http://${req.headers.host}`;
+ const baseUrl = publicHost;
+ res.json({ url: `${baseUrl}/api/temp-img/${id}` });
+});
+
+// GET /api/temp-img/:id — serve the stored image
+app.get("/api/temp-img/:id", (req, res) => {
+ const img = _tempImgs.get(req.params.id);
+ if (!img) return res.status(404).send("Not found");
+ res.setHeader("Content-Type", img.contentType);
+ res.setHeader("Cache-Control", "public, max-age=604800");
+ res.send(Buffer.from(img.b64, "base64"));
+});
+
 // Extract data: URLs from HTML and replace with CID inline attachments for email clients
 function extractCidImages(html) {
  const cidAttachments = [];
