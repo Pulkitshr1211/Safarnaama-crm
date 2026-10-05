@@ -830,9 +830,13 @@ function genItinHTML(it, template, biz, profile) {
   }
 
   // Classic — rich layout: cover photo (user upload > Picsum seed fallback), hotel cards, day cards, full footer
+  // Cover uses 100% inline styles so it renders correctly in email clients that strip <style> blocks
   const _destSeed = (it.destination||"travel").replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,24)||"travel";
   const coverUrl = realUrl(it.cover_image_url) || `https://picsum.photos/seed/${_destSeed}/780/220`;
-  const coverBlock = `<div class="cover"><img src="${coverUrl}" alt="cover" class="cover-img" onerror="this.parentElement.style.background='${pc}';this.style.display='none'"/><div class="cover-over"><div class="cover-logo">${co.logo?`<img src="${co.logo}" alt="logo" style="height:40px;object-fit:contain;margin-bottom:5px;display:block"/>`:`<div style="font-size:20px;font-weight:900;letter-spacing:-0.5px;margin-bottom:3px">${co.name}</div>`}</div><div class="cover-title">${it.title||"Itinerary"}</div>${co.tagline?`<div class="cover-sub">${co.tagline}</div>`:""}</div></div>`;
+  const _coverLogo = co.logo
+    ? `<img src="${co.logo}" alt="logo" style="height:40px;object-fit:contain;margin-bottom:5px;display:block"/>`
+    : `<div style="font-size:20px;font-weight:900;color:#fff;letter-spacing:-0.5px;margin-bottom:3px">${co.name}</div>`;
+  const coverBlock = `<div style="position:relative;height:220px;overflow:hidden;background:${pc};font-family:'Segoe UI',Arial,sans-serif"><img src="${coverUrl}" alt="cover" style="position:absolute;top:0;left:0;width:100%;height:220px;object-fit:cover;display:block" onerror="this.style.display='none'"/><div style="position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(to bottom,rgba(0,0,0,.1),rgba(0,0,0,.65));display:flex;flex-direction:column;justify-content:flex-end;padding:20px 28px"><div style="margin-bottom:6px">${_coverLogo}</div><div style="font-size:22px;font-weight:800;color:#fff;line-height:1.2">${it.title||"Itinerary"}</div>${co.tagline?`<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:3px">${co.tagline}</div>`:""}</div></div>`;
 
   const hotelCard = h => {
     const img = realUrl(h.image_url);
