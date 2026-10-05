@@ -1777,6 +1777,37 @@ app.put("/api/settings/:key", async (req, res) => {
  res.json({ success: true });
 });
 // ────────────────────────────────────────────────────────────────────────────
+// PORTALS (white-label configs) — stored as JSON array in app_settings
+// ────────────────────────────────────────────────────────────────────────────
+async function _getPortals() {
+ const { data } = await db.from("app_settings").select("value").eq("key", "portals").single();
+ return Array.isArray(data?.value) ? data.value : [];
+}
+async function _savePortals(arr) {
+ await db.from("app_settings").upsert({ key: "portals", value: arr, updated_at: new Date() }, { onConflict: "key" });
+}
+app.get("/api/portals", async (req, res) => {
+ res.json(await _getPortals());
+});
+app.post("/api/portals", async (req, res) => {
+ const portals = await _getPortals();
+ const item = req.body;
+ const next = [...portals.filter(p => p.id !== item.id), item];
+ await _savePortals(next);
+ res.json(item);
+});
+app.patch("/api/portals/:id", async (req, res) => {
+ const portals = await _getPortals();
+ const next = portals.map(p => p.id === req.params.id ? { ...p, ...req.body } : p);
+ await _savePortals(next);
+ res.json(next.find(p => p.id === req.params.id) || {});
+});
+app.delete("/api/portals/:id", async (req, res) => {
+ const portals = await _getPortals();
+ await _savePortals(portals.filter(p => p.id !== req.params.id));
+ res.status(204).end();
+});
+// ────────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ────────────────────────────────────────────────────────────────────────────
 app.get("/api/notifications", async (req, res) => {

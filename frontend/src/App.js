@@ -240,6 +240,42 @@ const useBizSettings = (localKey) => {
  return [settings, save];
 };
 
+// Generic hook for a single JSON value stored in app_settings (keyed objects, not arrays).
+// Reads from API on mount; writes to both API and localStorage on set.
+const useSettingsKey = (apiKey, defaultVal) => {
+ const lsKey = `sfn_setting_${apiKey}`;
+ const [val, setVal] = useState(() => {
+  try {
+   const c = JSON.parse(localStorage.getItem(lsKey) || "null");
+   return c ? { ...defaultVal, ...c } : { ...defaultVal };
+  } catch { return { ...defaultVal }; }
+ });
+ useEffect(() => {
+  fetch(`/api/settings/${apiKey}`)
+   .then(r => r.ok ? r.json() : null)
+   .then(data => {
+    if (data && Object.keys(data).length > 0) {
+     const merged = { ...defaultVal, ...data };
+     setVal(merged);
+     localStorage.setItem(lsKey, JSON.stringify(merged));
+    }
+   })
+   .catch(() => {});
+ }, []); // eslint-disable-line react-hooks/exhaustive-deps
+ const save = newVal => {
+  const next = typeof newVal === "function" ? newVal(val) : newVal;
+  const merged = { ...defaultVal, ...next };
+  setVal(merged);
+  localStorage.setItem(lsKey, JSON.stringify(merged));
+  fetch(`/api/settings/${apiKey}`, {
+   method: "PUT",
+   headers: { "Content-Type": "application/json" },
+   body: JSON.stringify(merged),
+  }).catch(() => {});
+ };
+ return [val, save];
+};
+
 // Fetches immutable reference data (destinations, cities, activities, dropdowns) from /api/reference.
 // localStorage is used as an instant cache so dropdowns render even before the fetch completes.
 const useRefData = (cacheKey, url) => {
@@ -1005,17 +1041,17 @@ function AppInner({ authUser, doLogout }) {
  const [users, setUsers]         = useAPIDB(K("users"),        PORTAL_SEED_USERS, activePortal ? null : "/api/users");
  const [tasks, setTasks]         = useAPIDB(K("tasks"),        [],                activePortal ? null : "/api/tasks");
  const [itineraries, setItineraries] = useAPIDB(K("itineraries"), [],             activePortal ? null : "/api/itineraries");
- const [whiteLabels, setWhiteLabels] = useDB("sfn_whitelabels", []); // never portal-scoped
+ const [whiteLabels, setWhiteLabels] = useAPIDB("sfn_whitelabels", [], activePortal ? null : "/api/portals"); // never portal-scoped
  const [currentUserId, setCurrentUserId] = useDB(K("current_user"), activePortal ? "PU001" : "U001");
  const [notifs, setNotifs]       = useDB(K("notifs"),       [
   { id:1, msg:"Welcome to your portal — start by adding leads!", time:"Just now", read:false },
  ]);
- const [markup]                  = useDB(K("markup"),       { star3:18, star4:22, transport:15, activities:20 });
+ const [markup, setMarkup]       = useSettingsKey("markup", { star3:18, star4:22, transport:15, activities:20 });
  const [bizSettings, setBizSettings] = useBizSettings(K("biz_settings"));
  const [refData, refLoading, refreshRef] = useRefData(K("ref_data"), "/api/reference");
 const [mediaData, , refreshMedia]       = useRefData(K("media_data"), "/api/media");
  const [themeMode, setThemeMode] = useDB(K("theme"), "light");
- const [companyProfile, setCompanyProfile] = useDB(K("company_profile"), DEFAULT_COMPANY_PROFILE);
+ const [companyProfile, setCompanyProfile] = useSettingsKey("company_profile", DEFAULT_COMPANY_PROFILE);
  // Merge companyProfile into brand (portal overrides take priority)
  if (!activePortal) {
   brand.companyName  = companyProfile.name         || brand.companyName;
@@ -1873,7 +1909,7 @@ Return JSON only:
  {page==="email" && <PageEmail leads={leads} toast$={toast$}/>}
  {page==="vendor_req" && isAdmin && <PageVendorRequests leads={leads} vendors={vendors} toast$={toast$}/>}
  {page==="chat" && <PageChat leads={leads} setLeads={setLeads} quotes={quotes} setQuotes={setQuotes} invoices={invoices} addNotif={addNotif} toast$={toast$} setPage={setPage} onInvoice={doInvoice}/>}
- {page==="settings" && <PageSettings markup={markup} bizSettings={bizSettings} setBizSettings={setBizSettings} toast$={toast$} themeMode={themeMode} setThemeMode={setThemeMode} companyProfile={companyProfile} setCompanyProfile={setCompanyProfile}/>}
+ {page==="settings" && <PageSettings markup={markup} setMarkup={setMarkup} bizSettings={bizSettings} setBizSettings={setBizSettings} toast$={toast$} themeMode={themeMode} setThemeMode={setThemeMode} companyProfile={companyProfile} setCompanyProfile={setCompanyProfile}/>}
  </div>
  </div>
  {/* ── UPLOAD STATUS BANNER ─────────────────────────────────────────── */}
@@ -6050,10 +6086,10 @@ function AutoCheckScheduleSection({ toast$ }) {
  );
 }
 
-function PageSettings({ markup, bizSettings, setBizSettings, toast$, themeMode="light", setThemeMode, companyProfile = {}, setCompanyProfile }) {
+function PageSettings({ markup, setMarkup, bizSettings, setBizSettings, toast$, themeMode="light", setThemeMode, companyProfile = {}, setCompanyProfile }) {
  const [localMarkup, setLocalMarkup] = useState({...markup});
  const [biz, setBiz] = useState({ ...DEFAULT_BIZ_SETTINGS, ...bizSettings });
- const saveMarkup = () => { localStorage.setItem("sfn_markup", JSON.stringify(localMarkup)); toast$("Markup saved!"); };
+ const saveMarkup = () => { setMarkup(localMarkup); toast$("Markup saved!"); };
  const saveBiz = () => { setBizSettings(biz); toast$("Settings saved to database!"); };
  return (
  <div style={{ maxWidth:740 }}>
