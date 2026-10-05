@@ -3283,6 +3283,32 @@ function uatSave(filename, payload) {
  console.log(`[UAT] ${_uatSession.tripType}/${_uatSession.folderName}/${filename}`);
 }
 
+// ── Hotel UAT session (separate from flight session) ──────────────────────────
+let _uatHotelSession = null;
+
+function uatHotelInitSession(searchQuery) {
+ if (!_uatMode) return;
+ const city = (searchQuery.cityName || `CID${searchQuery.cityId || "?"}`).toUpperCase().replace(/\s+/g, "_");
+ const ci = searchQuery.checkinDate || "";
+ const co = searchQuery.checkoutDate || "";
+ const nights = ci && co ? Math.round((new Date(co) - new Date(ci)) / 86400000) : 0;
+ const rooms  = searchQuery.roomInfo?.length || 1;
+ const adults = searchQuery.roomInfo?.[0]?.numberOfAdults || 2;
+ const children = searchQuery.roomInfo?.[0]?.numberOfChild || 0;
+ const pax = [adults > 0 ? `${adults}A` : "", children > 0 ? `${children}C` : ""].filter(Boolean).join("-");
+ const folderName = `${city}-${nights}N-${rooms}R-${pax}`;
+ _uatHotelSession = { folderName };
+ console.log(`[UAT] hotel session: hotels/${folderName}`);
+}
+
+function uatHotelSave(filename, payload) {
+ if (!_uatMode || !_uatHotelSession) return;
+ const dir = path.join(UAT_BASE, "hotels", _uatHotelSession.folderName);
+ if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+ fs.writeFileSync(path.join(dir, filename), JSON.stringify(payload, null, 4));
+ console.log(`[UAT] hotels/${_uatHotelSession.folderName}/${filename}`);
+}
+
 async function tjGet(path) {
  try {
   const r = await axios.get(`${TJ_BASE}${path}`, { headers: TJ_HDRS() });
@@ -3312,6 +3338,15 @@ app.post("/api/uat/enable", (req, res) => {
  res.json({ ok: true, uatMode: true, outputDir: UAT_BASE });
 });
 
+// Manually restore a UAT session (to save logs for already-booked flows)
+app.post("/api/uat/session", (req, res) => {
+ const { tripType, folderName } = req.body;
+ if (!tripType || !folderName) return res.status(400).json({ error:"tripType and folderName required" });
+ _uatSession = { tripType, folderName };
+ console.log(`[UAT] session manually set: ${tripType}/${folderName}`);
+ res.json({ ok: true, session: _uatSession });
+});
+
 // Disable UAT capture mode
 app.post("/api/uat/disable", (req, res) => {
  _uatMode = false;
@@ -3325,14 +3360,15 @@ app.post("/api/uat/disable", (req, res) => {
 app.get("/api/uat/cases", (req, res) => {
  if (!fs.existsSync(UAT_BASE)) return res.json({ cases: [], uatMode: _uatMode });
  const result = [];
- for (const tripType of ["oneway","roundtrip","multicity"]) {
+ for (const tripType of ["oneway","roundtrip","multicity","hotels"]) {
   const dir = path.join(UAT_BASE, tripType);
   if (!fs.existsSync(dir)) continue;
   for (const folder of fs.readdirSync(dir)) {
    const full = path.join(dir, folder);
    if (!fs.statSync(full).isDirectory()) continue;
    const files = fs.readdirSync(full);
-   result.push({ tripType, folder, files, complete: files.length >= 8 });
+   const isHotel = tripType === "hotels";
+   result.push({ tripType, folder, files, complete: isHotel ? files.length >= 10 : files.length >= 8 });
   }
  }
  res.json({ cases: result, uatMode: _uatMode, outputDir: UAT_BASE });
@@ -3933,6 +3969,9 @@ app.post("/api/hotels/search", async (req, res) => {
 
   const searchQuery = { checkinDate, checkoutDate, roomInfo, nationality, currency:"INR", countryCode:"IN", cityId: String(cityId) };
 
+  uatHotelInitSession({ ...searchQuery, cityName });
+  uatHotelSave("SearchRequest.json", { searchQuery });
+
   let data;
   try {
    data = await tjPost("/hms/v1/hotel-search", { searchQuery });
@@ -3949,6 +3988,7 @@ app.post("/api/hotels/search", async (req, res) => {
    console.error("[hotels/search]", errCode, msg);
    return res.status(500).json({ error: msg });
   }
+  uatHotelSave("SearchResponse.json", data);
   res.json(data);
  } catch(e) {
   const msg = e.response?.data?.message || e.response?.data?.errors?.[0]?.message || e.message;
@@ -3963,7 +4003,10 @@ app.post("/api/hotels/rooms", async (req, res) => {
   if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
   const { hotelId, searchId } = req.body;
   if (!hotelId || !searchId) return res.status(400).json({ error:"hotelId and searchId are required" });
-  const data = await tjPost("/hms/v1/room-details", { hotelId: String(hotelId), searchId });
+  const roomReq = { hotelId: String(hotelId), searchId };
+  uatHotelSave("RoomDetailsRequest.json", roomReq);
+  const data = await tjPost("/hms/v1/room-details", roomReq);
+  uatHotelSave("RoomDetailsResponse.json", data);
   res.json(data);
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });
@@ -3976,7 +4019,10 @@ app.post("/api/hotels/prebook", async (req, res) => {
   if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
   const { searchId, hotelId, rooms } = req.body;
   if (!searchId || !hotelId || !rooms?.length) return res.status(400).json({ error:"searchId, hotelId and rooms[] are required" });
-  const data = await tjPost("/hms/v1/hotel-pre-book", { searchId, hotelId: String(hotelId), rooms });
+  const preBookReq = { searchId, hotelId: String(hotelId), rooms };
+  uatHotelSave("PreBookRequest.json", preBookReq);
+  const data = await tjPost("/hms/v1/hotel-pre-book", preBookReq);
+  uatHotelSave("PreBookResponse.json", data);
   res.json(data);
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });
@@ -3989,7 +4035,56 @@ app.post("/api/hotels/book", async (req, res) => {
   if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
   const { bookingId, guestDetails, paymentInfo } = req.body;
   if (!bookingId || !guestDetails) return res.status(400).json({ error:"bookingId and guestDetails are required" });
-  const data = await tjPost("/hms/v1/hotel-book", { bookingId, guestDetails, paymentInfo });
+  const bookReq = { bookingId, guestDetails, paymentInfo };
+  uatHotelSave("BookingRequest.json", bookReq);
+  const data = await tjPost("/hms/v1/hotel-book", bookReq);
+  uatHotelSave("BookingResponse.json", data);
+  res.json(data);
+ } catch(e) {
+  res.status(500).json({ error: e.response?.data?.message || e.message });
+ }
+});
+
+// Hotel booking detail — retrieve confirmed booking info
+app.post("/api/hotels/booking-details", async (req, res) => {
+ try {
+  if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
+  const { bookingId } = req.body;
+  if (!bookingId) return res.status(400).json({ error:"bookingId is required" });
+  uatHotelSave("BookingDetailRequest.json", { bookingId });
+  const data = await tjPost("/hms/v1/hotel-booking-detail", { bookingId });
+  uatHotelSave("BookingDetailResponse.json", data);
+  res.json(data);
+ } catch(e) {
+  res.status(500).json({ error: e.response?.data?.message || e.message });
+ }
+});
+
+// Hotel cancellation charges — preview penalty before cancelling
+app.post("/api/hotels/cancel-charges", async (req, res) => {
+ try {
+  if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
+  const { bookingId } = req.body;
+  if (!bookingId) return res.status(400).json({ error:"bookingId is required" });
+  uatHotelSave("CancelChargesRequest.json", { bookingId });
+  const data = await tjPost("/hms/v1/hotel-cancel-charges", { bookingId });
+  uatHotelSave("CancelChargesResponse.json", data);
+  res.json(data);
+ } catch(e) {
+  res.status(500).json({ error: e.response?.data?.message || e.message });
+ }
+});
+
+// Hotel cancellation — submit cancellation request
+app.post("/api/hotels/cancel", async (req, res) => {
+ try {
+  if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
+  const { bookingId, remarks } = req.body;
+  if (!bookingId) return res.status(400).json({ error:"bookingId is required" });
+  const cancelReq = { bookingId, remarks: remarks || "Cancelled via API" };
+  uatHotelSave("CancelRequest.json", cancelReq);
+  const data = await tjPost("/hms/v1/hotel-cancel", cancelReq);
+  uatHotelSave("CancelResponse.json", data);
   res.json(data);
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });

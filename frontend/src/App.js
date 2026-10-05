@@ -99,10 +99,11 @@ const useDB = (key, initial) => {
 function syncToAPI(endpoint, prev, next) {
  const prevMap = new Map((prev || []).map(x => [String(x.id), x]));
  const nextMap = new Map((next || []).map(x => [String(x.id), x]));
- const H = { "Content-Type": "application/json" };
+ const token = localStorage.getItem("sfn_auth_token");
+ const H = { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) };
  for (const [id] of prevMap)
   if (!nextMap.has(id))
-   fetch(`${endpoint}/${id}`, { method: "DELETE" }).catch(() => {});
+   fetch(`${endpoint}/${id}`, { method: "DELETE", headers: H }).catch(() => {});
  for (const [id, item] of nextMap) {
   if (!prevMap.has(id))
    fetch(endpoint, { method: "POST", headers: H, body: JSON.stringify(item) }).catch(() => {});
@@ -126,7 +127,9 @@ const useAPIDB = (key, initial, endpoint) => {
  });
  useEffect(() => {
   if (!endpoint) return;
-  fetch(endpoint)
+  const token = localStorage.getItem("sfn_auth_token");
+  const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+  fetch(endpoint, { headers })
    .then(r => r.ok ? r.json() : null)
    .then(data => {
     // Only overwrite local data when API returns real records, OR when local is also empty.
