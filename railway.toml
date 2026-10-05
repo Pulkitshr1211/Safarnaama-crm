@@ -1,0 +1,8 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm --prefix backend install && npm --prefix frontend install --include=dev && CI=false npm --prefix frontend run build"
+
+[deploy]
+startCommand = "node backend/server.js"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
