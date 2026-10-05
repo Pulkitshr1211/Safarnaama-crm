@@ -85,13 +85,16 @@ const withUpload = (multerMiddleware) => (req, res, next) => {
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-// ─── SERVE REACT BUILD (production only) ─────────────────────────────────────
-// In production the backend serves the compiled React app from /frontend/build.
-// API routes are registered AFTER this, so /api/... requests fall through correctly.
-if (process.env.NODE_ENV === "production") {
- // In production Railway copies frontend/build → backend/public during the build step
- const BUILD = path.join(__dirname, "public");
+// ─── SERVE REACT BUILD ───────────────────────────────────────────────────────
+// Railway build copies frontend/build → backend/public (always present in prod).
+// Local dev uses ../frontend/build. Falls back gracefully if neither exists.
+const { existsSync } = require("fs");
+const BUILD = existsSync(path.join(__dirname, "public/index.html"))
+ ? path.join(__dirname, "public")           // production (Railway)
+ : path.join(__dirname, "../frontend/build"); // local dev
+if (existsSync(path.join(BUILD, "index.html"))) {
  app.use(express.static(BUILD, { index: "index.html" }));
+ console.log(" React app: serving from", BUILD);
 }
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 const crypto = require("crypto");
@@ -4391,8 +4394,7 @@ app.delete("/api/leads/documents/:docId", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // REACT ROUTER FALLBACK (production) — any non-API route serves index.html
 // ─────────────────────────────────────────────────────────────────────────────
-if (process.env.NODE_ENV === "production") {
- const BUILD = path.join(__dirname, "public");
+if (existsSync(path.join(BUILD, "index.html"))) {
  app.get(/^(?!\/api|\/health|\/webhook).*/, (req, res) => {
   res.sendFile(path.join(BUILD, "index.html"));
  });
