@@ -2585,27 +2585,45 @@ app.post("/api/vendor-requests/send", async (req, res) => {
   if (!vendor_email || !subject) return res.status(400).json({ error: "vendor_email and subject required" });
   const cfg = await getEmailCfg();
   if (!cfg?.password) return res.status(400).json({ error: "Email not configured — go to Settings → Email and save your SMTP credentials first" });
-  console.log(`[vendor-requests/send] to=${vendor_email} via ${cfg.smtp_host}:${cfg.smtp_port}`);
+  const fromEmail = cfg.username;
+  const fromName  = cfg.from_name || "Safarnaama Holidays";
+  const htmlBody  = (body||"").replace(/\n/g,"<br/>");
+  let messageId   = "";
 
-  const transporter = buildSmtpTransport(cfg);
-  const mail = {
-   from: cfg.from_name?`"${cfg.from_name}" <${cfg.username}>`:cfg.username,
-   to: vendor_email, subject,
-   text: body||"", html: (body||"").replace(/\n/g,"<br/>"),
-  };
-  const info = await transporter.sendMail(mail);
-  const messageId = info.messageId || "";
-
-  // Save copy to IMAP Sent folder
-  try {
-   const stream = nodemailer.createTransport({ streamTransport:true, newline:"unix" });
-   const si = await stream.sendMail({ ...mail });
-   const chunks = []; for await (const c of si.message) chunks.push(c);
-   const imap = buildImapClient(cfg);
-   await imap.connect();
-   await imap.append(cfg.sent_folder||"Sent", Buffer.concat(chunks), ["\\Seen"]);
-   await imap.logout();
-  } catch (e) { console.warn("[vr-send] IMAP append:", e.message); }
+  const useSendGrid = SENDGRID_KEY?.startsWith("SG.");
+  if (useSendGrid) {
+   console.log(`[vendor-requests/send] to=${vendor_email} via SendGrid`);
+   await sgMail.send({ from:{ email: fromEmail, name: fromName }, to: vendor_email, subject, text: body||"", html: htmlBody });
+   // IMAP Sent append in background (non-blocking)
+   ;(async () => {
+    try {
+     const stream = nodemailer.createTransport({ streamTransport:true, newline:"unix" });
+     const si = await stream.sendMail({ from:`"${fromName}" <${fromEmail}>`, to: vendor_email, subject, text: body||"", html: htmlBody });
+     const chunks = []; for await (const c of si.message) chunks.push(c);
+     const imap = buildImapClient(cfg);
+     await imap.connect();
+     await imap.append(cfg.sent_folder||"Sent", Buffer.concat(chunks), ["\\Seen"]);
+     await imap.logout();
+    } catch(e) { console.warn("[vr-send] IMAP append:", e.message); }
+   })();
+  } else {
+   console.log(`[vendor-requests/send] to=${vendor_email} via ${cfg.smtp_host}:${cfg.smtp_port}`);
+   const mail = { from: `"${fromName}" <${fromEmail}>`, to: vendor_email, subject, text: body||"", html: htmlBody };
+   const info = await buildSmtpTransport(cfg).sendMail(mail);
+   messageId = info.messageId || "";
+   // IMAP Sent append in background
+   ;(async () => {
+    try {
+     const stream = nodemailer.createTransport({ streamTransport:true, newline:"unix" });
+     const si = await stream.sendMail({ ...mail });
+     const chunks = []; for await (const c of si.message) chunks.push(c);
+     const imap = buildImapClient(cfg);
+     await imap.connect();
+     await imap.append(cfg.sent_folder||"Sent", Buffer.concat(chunks), ["\\Seen"]);
+     await imap.logout();
+    } catch(e) { console.warn("[vr-send] IMAP append:", e.message); }
+   })();
+  }
 
   const id = genId("VR");
   const { error } = await db.from("vendor_requests").insert({
