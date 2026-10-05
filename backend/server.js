@@ -124,7 +124,7 @@ function verifyToken(token) {
 }
 
 // Auth middleware — applied to all /api/* except whitelisted paths
-const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/forgot-password", "/api/auth/health", "/api/health", "/api/debug/email"]);
+const AUTH_SKIP = new Set(["/api/auth/login", "/api/auth/forgot-password", "/api/auth/health", "/api/health", "/api/debug/email", "/api/debug/ip"]);
 app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
@@ -2107,6 +2107,16 @@ app.get("/api/debug/email", async (req, res) => {
  res.json({ steps });
 });
 
+// GET /api/debug/ip — returns this server's outbound public IP (for whitelisting in TripJack etc.)
+app.get("/api/debug/ip", async (req, res) => {
+ try {
+  const r = await axios.get("https://api.ipify.org?format=json", { timeout: 5000 });
+  res.json({ outbound_ip: r.data.ip, note: "Whitelist this IP in TripJack portal → API Settings → IP Whitelist" });
+ } catch (e) {
+  res.status(500).json({ error: "Could not determine outbound IP: " + e.message });
+ }
+});
+
 // PUT /api/email/config — save (preserves existing password if not changed)
 app.put("/api/email/config", async (req, res) => {
  try {
@@ -3443,6 +3453,12 @@ app.post("/api/flights/search", async (req, res) => {
     console.log("[TJ search]", JSON.stringify({ searchQuery }));
     const tjData = await tjPost("/fms/v1/air-search-all", { searchQuery });
     uatSave("SearchResponse.json", tjData);
+    const tjInternal = tjData?.status;
+    console.log("[TJ response] internalStatus:", tjInternal?.internalStatus, "msg:", tjInternal?.message, "searchId:", tjData?.searchResult?.searchId, "tripInfosKeys:", Object.keys(tjData?.searchResult?.tripInfos || {}));
+    if (tjInternal && tjInternal.internalStatus !== 200) {
+     errors.tripjack = `TripJack: ${tjInternal.message || "error"} (code ${tjInternal.internalStatus})`;
+     console.error("[TJ] non-200 internal status:", JSON.stringify(tjInternal));
+    }
     const searchId = tjData?.searchResult?.searchId || "";
     const tripInfos = tjData?.searchResult?.tripInfos || {};
     results.push(...normalizeTjFlights(tripInfos.ONWARD, searchId, "outbound"));
