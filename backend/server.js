@@ -3498,8 +3498,9 @@ app.post("/api/flights/price", async (req, res) => {
 
   if (flightOffer._source === "tripjack") {
    if (!TJ_KEY) return res.status(503).json({ error:"TripJack not configured" });
-   if (!flightOffer._priceId) return res.status(400).json({ error:"Missing _priceId on flight offer — search again and retry" });
-   const reviewReq = { priceIds: [flightOffer._priceId] };
+   if (!flightOffer._priceId && !flightOffer._priceIds?.length) return res.status(400).json({ error:"Missing _priceId on flight offer — search again and retry" });
+   const reviewReq = { priceIds: flightOffer._priceIds || [flightOffer._priceId] };
+   console.log("[TJ review] sending priceIds:", JSON.stringify(reviewReq.priceIds));
    uatSave("ReviewRequest.json", reviewReq);
    const data = await tjPost("/fms/v1/review", reviewReq);
    uatSave("ReviewResponse.json", data);
