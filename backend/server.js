@@ -133,6 +133,8 @@ app.use((req, res, next) => {
  if (!req.path.startsWith("/api/")) return next();
  if (AUTH_SKIP.has(req.path)) return next();
  if (req.path.startsWith("/webhook/")) return next();
+ // Temp-hosted images are fetched by email clients with no auth token
+ if (req.method === "GET" && req.path.startsWith("/api/temp-img/")) return next();
  const raw = req.headers.authorization || "";
  if (!raw.startsWith("Bearer ")) return res.status(401).json({ error: "Login required" });
  const userId = verifyToken(raw.slice(7));
