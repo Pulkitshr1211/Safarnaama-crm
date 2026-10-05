@@ -6455,8 +6455,11 @@ function FlightSearchModal({ open, onClose, onImport, initDate="", adults=1, toa
     setResultTab("outbound");
     setStep("results");
     if (!all.length) {
-     const errs = Object.values(data.errors||{}).filter(Boolean).join(" · ");
-     setSearchErr(errs || "No flights found for this route and date.");
+     // Only show errors from APIs that were actually configured/active
+     const activeErrors = Object.entries(data.errors||{})
+      .filter(([src, msg]) => msg && data.meta?.sources?.[src])
+      .map(([, msg]) => msg);
+     setSearchErr(activeErrors.join(" · ") || "No flights found for this route and date.");
     }
    } catch(e) { setSearchErr(e.message); }
    finally { setSearching(false); }

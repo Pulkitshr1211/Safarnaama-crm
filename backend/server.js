@@ -3400,7 +3400,7 @@ app.post("/api/flights/search", async (req, res) => {
  await Promise.all([
   // ── Amadeus ───────────────────────────────────────────────────────────────
   (async () => {
-   if (!AMADEUS_CLIENT_ID) return;
+   if (!AMADEUS_CLIENT_ID || !AMADEUS_CLIENT_SECRET) return; // skip silently if not configured
    try {
     const params = {
      originLocationCode: origin.toUpperCase(), destinationLocationCode: destination.toUpperCase(),
@@ -3418,8 +3418,12 @@ app.post("/api/flights/search", async (req, res) => {
      results.push(offer);
     });
    } catch(e) {
-    errors.amadeus = e.response?.data?.errors?.[0]?.detail || e.message;
-    console.error("[amadeus] search:", errors.amadeus);
+    // Only surface Amadeus errors if they're meaningful (not DNS/network when unconfigured)
+    const msg = e.response?.data?.errors?.[0]?.detail || e.message;
+    if (!msg.includes("ENOTFOUND") && !msg.includes("ECONNREFUSED") && !msg.includes("credentials not set")) {
+     errors.amadeus = msg;
+    }
+    console.error("[amadeus] search:", msg);
    }
   })(),
   // ── TripJack ──────────────────────────────────────────────────────────────
