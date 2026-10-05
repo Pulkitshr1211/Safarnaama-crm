@@ -563,7 +563,7 @@ const Badge = ({ status }) => {
  return <span style={{ background:c+"22",color:c,border:`1px solid ${c}44`,padding:"2px 10px",borderRadius:20,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.5 }}>{status}</span>;
 };
 const Modal = ({ open, onClose, title, children, width=660 }) => !open ? null : (
- <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+ <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
  <div style={{ background:"#FFFFFF",border:"1px solid #D5E1EE",borderRadius:16,width:"100%",maxWidth:width,maxHeight:"90vh",overflow:"auto",boxShadow:"0 30px 70px rgba(0,0,0,.6)" }}>
  <div style={{ padding:"18px 22px",borderBottom:"1px solid #D5E1EE",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
  <h3 style={{ margin:0,color:"#0F172A",fontSize:15,fontFamily:"'Playfair Display',serif" }}>{title}</h3>
@@ -1774,9 +1774,10 @@ Return JSON only:
  <style>{`
  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700&family=Playfair+Display:wght@400;600;700&display=swap');
  *{box-sizing:border-box;margin:0;padding:0;}
- ::-webkit-scrollbar{width:4px;height:4px;}
- ::-webkit-scrollbar-track{background:#FFFFFF;}
- ::-webkit-scrollbar-thumb{background:#D5E1EE;border-radius:4px;}
+ ::-webkit-scrollbar{width:7px;height:7px;}
+ ::-webkit-scrollbar-track{background:#E8EFF7;border-radius:4px;}
+ ::-webkit-scrollbar-thumb{background:#7BAAC4;border-radius:4px;}
+ ::-webkit-scrollbar-thumb:hover{background:#4A8AAE;}
  input::placeholder,textarea::placeholder{color:#2A4A5A;}
  select option{background:#FFFFFF;}
  .nav-btn:hover{background:#F2F6FB!important;}
@@ -1808,8 +1809,9 @@ Return JSON only:
  [data-theme="dark"] table td,[data-theme="dark"] table th{border-color:#334155!important;}
  [data-theme="dark"] .nav-btn:hover{background:#1E293B!important;}
  [data-theme="dark"] .row:hover{background:#1E293B!important;}
- [data-theme="dark"] ::-webkit-scrollbar-track{background:#0F172A!important;}
- [data-theme="dark"] ::-webkit-scrollbar-thumb{background:#334155!important;}
+ [data-theme="dark"] ::-webkit-scrollbar-track{background:#1E293B!important;}
+ [data-theme="dark"] ::-webkit-scrollbar-thumb{background:#475569!important;}
+ [data-theme="dark"] ::-webkit-scrollbar-thumb:hover{background:#64748B!important;}
  ` : ""}
  `}</style>
  {/* ── SIDEBAR ─────────────────────────────────────────────────────────── */}
@@ -2771,8 +2773,7 @@ function SendItinEmailModal({ data, onClose, toast$ }) {
   setSending(false);
  };
  return (
-  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center" }}
-   onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center" }}>
    <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(560px,95vw)", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 64px rgba(0,0,0,.3)" }}>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
      <div>
@@ -2871,8 +2872,7 @@ function SendItinWhatsAppModal({ data, onClose, companyProfile, bizSettings }) {
   window.open(`https://wa.me/${n}?text=${encodeURIComponent(msg)}`, "_blank");
  };
  return (
-  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center", padding:"16px" }}
-   onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center", padding:"16px" }}>
    <div style={{ background:"#fff", borderRadius:16, width:"min(580px,100%)", maxHeight:"92vh", boxShadow:"0 24px 64px rgba(0,0,0,.3)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
     {/* ── Sticky header ── */}
@@ -3252,8 +3252,7 @@ function PageVendorRequests({ leads, vendors, toast$ }) {
 
    {/* New Request Modal */}
    {showNew&&(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
-     onClick={e=>{if(e.target===e.currentTarget)setShowNew(false);}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
      <div style={{background:"#fff",borderRadius:16,padding:28,width:"min(700px,95vw)",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
        <div style={{fontWeight:800,fontSize:17,color:"#0F172A"}}>New Vendor Quote Request</div>
@@ -3521,8 +3520,7 @@ function PageEmail({ leads, toast$ }) {
 
    {/* ── Compose Modal ── */}
    {showCompose && (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.42)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}
-     onClick={e=>{ if(e.target===e.currentTarget) setShowCompose(false); }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.42)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
      <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(620px,95vw)", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
        <div style={{ fontWeight:700, fontSize:16, color:"#0F172A" }}>{compose.inReplyTo?"Reply":"New Email"}</div>
@@ -3601,8 +3599,7 @@ function WhatsAppModal({ lead, bizSettings, companyProfile, onClose }) {
  const inp = { width:"100%", background:"#FFFFFF", border:"1px solid #D5E1EE", borderRadius:8, padding:"9px 13px", color:"#0F172A", fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
  const VARS = ["{name}","{destination}","{travel_date}","{pax}","{kids}","{kids_text}","{budget}","{agent}"];
  return (
-  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}
-   onClick={e=>{ if (e.target===e.currentTarget) onClose(); }}>
+  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
    <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(560px,95vw)", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
     {/* Header */}
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
@@ -3738,8 +3735,7 @@ function LeadDocsModal({ lead, onClose, toast$ }) {
  const lbl = { display:"block", color:"#64748B", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:5 };
 
  return (
-  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center" }}
-   onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+  <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center" }}>
    <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(620px,95vw)", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 64px rgba(0,0,0,.3)", display:"flex", flexDirection:"column", gap:0 }}>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
      <div>
@@ -5287,7 +5283,7 @@ function PageWhiteLabel({ whiteLabels, setWhiteLabels, isAdmin, toast$ }) {
  const PreviewModal = ({ wl, onClose }) => {
   const NAV_PREVIEW = WL_MODULES.filter(m => (wl.modules||[]).includes(m.id));
   return (
-   <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+   <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
     <div style={{ background:"#F6F8FC",borderRadius:16,width:"100%",maxWidth:900,maxHeight:"90vh",overflow:"hidden",boxShadow:"0 30px 70px rgba(0,0,0,.7)",display:"flex",flexDirection:"column" }}>
      {/* Preview header */}
      <div style={{ background:"#FFFFFF",padding:"12px 18px",borderBottom:"1px solid #E6ECF5",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
@@ -6602,7 +6598,7 @@ function FlightSearchModal({ open, onClose, onImport, initDate="", adults=1, toa
 
  if (!open) return null;
  return (
-  <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
    <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:920,maxHeight:"93vh",overflow:"auto",boxShadow:"0 30px 70px rgba(0,0,0,.6)"}}>
 
     <div style={{padding:"16px 22px",borderBottom:"1px solid #D5E1EE",display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#1A6B8A,#0D4D6B)",borderRadius:"16px 16px 0 0",position:"sticky",top:0,zIndex:10}}>
@@ -7183,7 +7179,7 @@ function HotelSearchModal({ open, onClose, onImport, initCheckin="", initCheckou
 
  if (!open) return null;
  return (
-  <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
    <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:920,maxHeight:"93vh",overflow:"auto",boxShadow:"0 30px 70px rgba(0,0,0,.6)"}}>
     <div style={{padding:"16px 22px",borderBottom:"1px solid #D5E1EE",display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#0D5C6B,#083C47)",borderRadius:"16px 16px 0 0",position:"sticky",top:0,zIndex:10}}>
      <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -10067,7 +10063,7 @@ body{padding-bottom:80px}
 
   {/* ── Vendor Quote Request Modal ── */}
   {vrModal && (
-   <div onClick={e=>e.target===e.currentTarget&&setVrModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+   <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
     <div style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:620, maxHeight:"90vh", overflow:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.5)" }}>
      <div style={{ padding:"16px 22px", borderBottom:"1px solid #E6ECF5", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
       <div>
