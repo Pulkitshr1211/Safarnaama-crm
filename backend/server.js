@@ -3649,7 +3649,9 @@ app.post("/api/flights/amendment-charges", async (req, res) => {
  try {
   const body = { bookingId, type, remarks: remarks || "Cancellation request" };
   if (trips?.length) body.trips = trips;
+  uatSave("CancelChargesRequest.json", body);
   const data = await tjPost("/oms/v1/air/amendment/amendment-charges", body);
+  uatSave("CancelChargesResponse.json", data);
   res.json({ data });
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });
@@ -3664,7 +3666,9 @@ app.post("/api/flights/submit-amendment", async (req, res) => {
  try {
   const body = { bookingId, type, remarks };
   if (trips?.length) body.trips = trips;
+  uatSave("CancelSubmitRequest.json", body);
   const data = await tjPost("/oms/v1/air/amendment/submit-amendment", body);
+  uatSave("CancelSubmitResponse.json", data);
   res.json({ data });
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });
@@ -3677,7 +3681,9 @@ app.post("/api/flights/amendment-details", async (req, res) => {
  const { amendmentId } = req.body;
  if (!amendmentId) return res.status(400).json({ error:"amendmentId required" });
  try {
+  uatSave("CancelDetailsRequest.json", { amendmentId });
   const data = await tjPost("/oms/v1/air/amendment/amendment-details", { amendmentId });
+  uatSave("CancelDetailsResponse.json", data);
   res.json({ data });
  } catch(e) {
   res.status(500).json({ error: e.response?.data?.message || e.message });
