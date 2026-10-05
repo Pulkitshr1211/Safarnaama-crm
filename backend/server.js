@@ -3455,11 +3455,13 @@ app.post("/api/flights/search", async (req, res) => {
     uatSave("SearchResponse.json", tjData);
     const tjInternal = tjData?.status;
     console.log("[TJ raw]", JSON.stringify(tjData).substring(0, 600));
-    console.log("[TJ response] internalStatus:", tjInternal?.internalStatus, "msg:", tjInternal?.message, "searchId:", tjData?.searchResult?.searchId, "tripInfosKeys:", Object.keys(tjData?.searchResult?.tripInfos || {}));
-    if (tjInternal?.internalStatus != null && tjInternal.internalStatus !== 200) {
-     errors.tripjack = `TripJack: ${tjInternal.message || "error"} (code ${tjInternal.internalStatus})`;
-     console.error("[TJ] non-200 internal status:", JSON.stringify(tjInternal));
+    if (tjInternal?.success === false || (tjInternal?.httpStatus && tjInternal.httpStatus !== 200)) {
+     const tjErrMsg = tjData?.errors?.[0]?.message || "Access Denied";
+     const tjErrCode = tjData?.errors?.[0]?.errCode || tjInternal?.httpStatus;
+     errors.tripjack = `TripJack: ${tjErrMsg} (code ${tjErrCode}) — whitelist Railway IP in TripJack portal`;
+     console.error("[TJ] access error:", JSON.stringify(tjData));
     }
+    console.log("[TJ response] httpStatus:", tjInternal?.httpStatus, "success:", tjInternal?.success, "searchId:", tjData?.searchResult?.searchId);
     const searchId = tjData?.searchResult?.searchId || "";
     const tripInfos = tjData?.searchResult?.tripInfos || {};
     results.push(...normalizeTjFlights(tripInfos.ONWARD, searchId, "outbound"));
