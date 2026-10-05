@@ -132,12 +132,15 @@ const useAPIDB = (key, initial, endpoint) => {
   fetch(endpoint, { headers })
    .then(r => r.ok ? r.json() : null)
    .then(data => {
-    // Only overwrite local data when API returns real records, OR when local is also empty.
-    // This prevents an empty Supabase (e.g. after a failed sync) from wiping localStorage data.
-    if (Array.isArray(data) && (data.length > 0 || !ref.current?.length)) {
+    if (Array.isArray(data) && data.length > 0) {
+     // API has data — use it as source of truth
      ref.current = data;
      rawSet(data);
      try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
+    } else if (Array.isArray(data) && data.length === 0 && ref.current?.length > 0) {
+     // API is empty but local has records — push local data up to Supabase (one-time migration)
+     console.log(`[useAPIDB] migrating ${ref.current.length} local records → ${endpoint}`);
+     syncToAPI(endpoint, [], ref.current);
     }
    })
    .catch(() => {}); // fall back to localStorage silently
