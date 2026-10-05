@@ -3455,7 +3455,7 @@ app.post("/api/flights/search", async (req, res) => {
     uatSave("SearchResponse.json", tjData);
     const tjInternal = tjData?.status;
     console.log("[TJ response] internalStatus:", tjInternal?.internalStatus, "msg:", tjInternal?.message, "searchId:", tjData?.searchResult?.searchId, "tripInfosKeys:", Object.keys(tjData?.searchResult?.tripInfos || {}));
-    if (tjInternal && tjInternal.internalStatus !== 200) {
+    if (tjInternal?.internalStatus != null && tjInternal.internalStatus !== 200) {
      errors.tripjack = `TripJack: ${tjInternal.message || "error"} (code ${tjInternal.internalStatus})`;
      console.error("[TJ] non-200 internal status:", JSON.stringify(tjInternal));
     }
