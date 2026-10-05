@@ -2081,6 +2081,7 @@ app.get("/api/email/config", async (req, res) => {
 app.get("/api/debug/email", async (req, res) => {
  const net = require("net");
  const steps = [];
+ steps.push({ step: "sendgrid", ok: !!SENDGRID_KEY?.startsWith("SG."), detail: SENDGRID_KEY?.startsWith("SG.") ? "SENDGRID_API_KEY is set ✓ — emails will use SendGrid" : "SENDGRID_API_KEY NOT set — will fall back to SMTP" });
  steps.push({ step: "supabase_env", ok: !!supabase, detail: supabase ? "SUPABASE_URL and key set" : "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in .env" });
  if (supabase) {
   try {
