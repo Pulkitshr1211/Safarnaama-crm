@@ -1156,14 +1156,13 @@ const [mediaData, , refreshMedia]       = useRefData(K("media_data"), "/api/medi
  };
  const downloadLeads = () => {
   const fields = ["id","name","email","phone","destination","travel_date","end_date","pax","kids","budget","budget_range","status","source","tour_type","city","assigned_to","follow_up_date","notes","created_at"];
-  const header = fields.join(",");
-  const rows = leads.map(l => fields.map(f => {
-   const v = String(l[f]??  "").replace(/"/g,'""');
-   return `"${v}"`;
-  }).join(",")).join("\n");
-  const blob = new Blob(["﻿"+header+"\n"+rows], { type:"text/csv;charset=utf-8;" });
+  const esc = v => String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const headerRow = `<tr>${fields.map(f=>`<th style="background:#1A6B8A;color:#fff;font-weight:700;padding:6px 10px">${f}</th>`).join("")}</tr>`;
+  const dataRows = leads.map(l=>`<tr>${fields.map(f=>`<td style="padding:5px 8px;border:1px solid #e2e8f0">${esc(l[f])}</td>`).join("")}</tr>`).join("");
+  const xls = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Leads</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table border="1">${headerRow}${dataRows}</table></body></html>`;
+  const blob = new Blob(["﻿"+xls], { type:"application/vnd.ms-excel;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href=url; a.download=`leads-${today()}.csv`;
+  const a = document.createElement("a"); a.href=url; a.download=`leads-${today()}.xls`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
  };
  const downloadVendors = () => downloadJSON(vendors, `vendors-${today()}.json`);
